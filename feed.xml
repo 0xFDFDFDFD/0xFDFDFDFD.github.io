@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>VMCALL.IO</title>
+    <description></description>
+    <link>http://localhost:4000/</link>
+    <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
+    <pubDate>Wed, 26 Mar 2025 16:49:25 +0100</pubDate>
+    <lastBuildDate>Wed, 26 Mar 2025 16:49:25 +0100</lastBuildDate>
+    <generator>Jekyll v4.3.2</generator>
+    
+      <item>
+        <title>.echo Hello World</title>
+        <description>&lt;h2 id=&quot;why&quot;&gt;Why?&lt;/h2&gt;
+&lt;p&gt;The main purpose of this blog is to provide a space where I can share background information for my presentation at &lt;a href=&quot;https://www.blackhat.com/asia-25/briefings/schedule/#misadventures-with-copilot-attacking-and-exploiting-windows-npu-drivers-43619&quot;&gt;BlackHat Asia 2025&lt;/a&gt;. Since I’m not particularly fond of Medium.com or other online publishing platforms, I decided to create my own—so here we are!&lt;/p&gt;
+
+&lt;h3 id=&quot;does-that-mean-this-blog-will-focus-solely-on-your-blackhat-presentation&quot;&gt;Does that mean this blog will focus solely on your BlackHat presentation?&lt;/h3&gt;
+&lt;p&gt;No. This blog will be a platform to share anything that piques my interest, and whenever I come across something worth discussing, I’ll post about it here.
+There is a high chance it will be something related to the windows kernel, vulnerability research or exploitation in general.&lt;/p&gt;
+
+&lt;h3 id=&quot;when-will-you-start-releasing-your-blogposts&quot;&gt;When will you start releasing your blogposts?&lt;/h3&gt;
+
+&lt;p&gt;Once I receive the green light from BlackHat, I estimate it’ll be around two or three weeks after the event.&lt;/p&gt;
+
+&lt;h3 id=&quot;so-stay-tuned-for-updatestheres-more-to-come&quot;&gt;…so stay tuned for updates—there’s more to come!&lt;/h3&gt;
+</description>
+        <pubDate>Wed, 26 Mar 2025 10:49:03 +0100</pubDate>
+        <link>http://localhost:4000/blog/2025-03-26-hello-world/</link>
+        <guid isPermaLink="true">http://localhost:4000/blog/2025-03-26-hello-world/</guid>
+        
+        
+        <category>Intro</category>
+        
+      </item>
+    
+  </channel>
+</rss>
