@@ -5,8 +5,8 @@
     <description></description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Thu, 10 Apr 2025 05:37:56 +0200</pubDate>
-    <lastBuildDate>Thu, 10 Apr 2025 05:37:56 +0200</lastBuildDate>
+    <pubDate>Thu, 10 Apr 2025 11:07:06 +0200</pubDate>
+    <lastBuildDate>Thu, 10 Apr 2025 11:07:06 +0200</lastBuildDate>
     <generator>Jekyll v4.4.1</generator>
     
       <item>
@@ -15,7 +15,7 @@
 an integer overflow turned out-of-bounds write (CVE-2024-36336) inside the paged pool to escalate our privileges on the latest Windows 11 version 24H2. In this blogpost we will focus on the exploitation strategy not on the bugs themselves. The bugs could be the content of a later blogpost… Maybe…&lt;/p&gt;
 
 &lt;h2 id=&quot;tldr&quot;&gt;TL;DR&lt;/h2&gt;
-&lt;p&gt;We largely followed the method described by k0shl in his writeup about &lt;a href=&quot;https://whereisk0shl.top/post/break-me-out-of-sandbox-in-old-pipe-cve-2022-22715-windows-dirty-pipe&quot;&gt;CVE-2022-22715 Windows Dirty Pipe&lt;/a&gt; (Amazing blog post read it!).
+&lt;p&gt;We largely followed the method described by k0shl in his writeup about &lt;a href=&quot;https://whereisk0shl.top/post/break-me-out-of-sandbox-in-old-pipe-cve-2022-22715-windows-dirty-pipe&quot;&gt;CVE-2022-22715 Windows Dirty Pipe&lt;/a&gt;. An amazing blog post read it!.
 With Windows 11 version 24H2 the bug around &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;previousMode&lt;/code&gt; which was often used for &lt;a href=&quot;https://www.nccgroup.com/us/research-blog/cve-2021-31956-exploiting-the-windows-kernel-ntfs-with-wnf-part-2/&quot;&gt;better read/write primitives&lt;/a&gt; was fixed.
 As the write primitive which k0shl used had side effects, we had to replace it with something else. We used a reference counter at offset 0x18 of &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN-&amp;gt;BnoIsolationHandlesEntry&lt;/code&gt; to gain an arbitrary increment primitive when we duplicate a &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; object.
 The increment primitive only works if the value to increment is within the range &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;0x1 - 0x7ffffffffffffffff&lt;/code&gt; otherwise, you get to enjoy a bluescreen.
@@ -24,7 +24,7 @@ This primitive was then used to enable the &lt;code class=&quot;language-plainte
 &lt;h2 id=&quot;intro&quot;&gt;Intro&lt;/h2&gt;
 &lt;p&gt;So lets start at the beginning. Our exploitation strategy looks something like this:&lt;/p&gt;
 &lt;ol&gt;
-  &lt;li&gt;Create a predictable heaplayout (Fengshui)&lt;/li&gt;
+  &lt;li&gt;Create a predictable pool layout aka Fengshui&lt;/li&gt;
   &lt;li&gt;Overwrite a &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_WNF_STATE_DATA&lt;/code&gt; object&lt;/li&gt;
   &lt;li&gt;Put a &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; object behind our &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_WNF_DATA&lt;/code&gt; object&lt;/li&gt;
   &lt;li&gt;Establish arbitrary read&lt;/li&gt;
@@ -59,12 +59,12 @@ This primitive was then used to enable the &lt;code class=&quot;language-plainte
 &lt;p&gt;The hardest part about the fengshui was choosing the size and which allocator we want to use. We choose the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;Variable Size&lt;/code&gt; allocator. Our fengshui has three different objects.&lt;/p&gt;
 
 &lt;ol&gt;
-  &lt;li&gt;The object which will trigger the overflow (See our &lt;a href=&quot;https://www.blackhat.com/asia-25/briefings/schedule/#misadventures-with-copilot-attacking-and-exploiting-windows-npu-drivers-43619&quot;&gt;BH presentation&lt;/a&gt;). It has an dynamic size.&lt;/li&gt;
+  &lt;li&gt;The object which will trigger the overflow. See our &lt;a href=&quot;http://i.blackhat.com/Asia-25/Asia-25-Stauffer-Misadventures-With-Copilot-Plus.pdf&quot;&gt;BH presentation&lt;/a&gt;. It has an dynamic size.&lt;/li&gt;
   &lt;li&gt;&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_WNF_STATE_DATA&lt;/code&gt; &amp;lt;3&lt;/li&gt;
   &lt;li&gt;A &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; object&lt;/li&gt;
 &lt;/ol&gt;
 
-&lt;p&gt;Luckily the only object where we don’t control the size is the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; object. Interestingly the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; object is not a fixed allocation but the size can vary depending on what is stored inside the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN-&amp;gt;DynamicPart&lt;/code&gt; (DACL and stuff I think, but I’m not 100% sure). For us our &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; objects had a size around 0x7c0.
+&lt;p&gt;Luckily the only object where we don’t control the size is the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; object. Interestingly the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; object is not a fixed allocation but the size can vary depending on what is stored inside the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN-&amp;gt;DynamicPart&lt;/code&gt;. I think it is some DACL stuff but I’m not 100% sure. For us our &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; objects had a size around 0x7c0.
 So we adjusted our &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_WNF_STATE_DATA&lt;/code&gt; and our vulnerable object to the same size.&lt;/p&gt;
 
 &lt;p&gt;Then our strategy was the following:&lt;/p&gt;
@@ -79,9 +79,7 @@ So we adjusted our &lt;code class=&quot;language-plaintext highlighter-rouge&quo
 
 &lt;p&gt;Visualized it looks something like this:&lt;/p&gt;
 &lt;figure&gt;
-  &lt;a href=&quot;&quot; target=&quot;&quot;&gt;
-    &lt;img src=&quot;/assets/images/gen/content/fengshui.jpg&quot; alt=&quot;Photo of the fengshui&quot; /&gt;
-  &lt;/a&gt;
+  &lt;img src=&quot;/assets/images/gen/content/fengshui.jpg&quot; alt=&quot;Photo of the fengshui&quot; /&gt;
   &lt;figcaption&gt;
     &lt;h4&gt;Fengshui visualized, AS: Allocated Size and DS: Data Size&lt;/h4&gt;
     &lt;p&gt;&lt;/p&gt;
@@ -89,19 +87,17 @@ So we adjusted our &lt;code class=&quot;language-plaintext highlighter-rouge&quo
 &lt;/figure&gt;
 
 &lt;h2 id=&quot;establish-arbitrary-read&quot;&gt;Establish arbitrary read&lt;/h2&gt;
-&lt;p&gt;After a reliable linear read/write primitive was established we needed arbitrary read. To establish an arbitrary read we can modify the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN-&amp;gt;BnoIsolationHandlesEntry&lt;/code&gt; and point it to a controlled userspace address (see once again &lt;a href=&quot;https://whereisk0shl.top/post/break-me-out-of-sandbox-in-old-pipe-cve-2022-22715-windows-dirty-pipe&quot;&gt;k0shls blog&lt;/a&gt;). At this userspace address we can now forge a &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_SEP_CACHED_HANDLES_ENTRY&lt;/code&gt;. The &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;EntryDescriptor.IsolationPrefix.Buffer&lt;/code&gt; at offset 0x30 can be pointed to the kernel address we want to read. And &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;EntryDescriptor.IsolationPrefix.MaximumLength&lt;/code&gt; at offset 0x28 defines how much bytes will be read.&lt;/p&gt;
+&lt;p&gt;After a reliable linear read/write primitive was established we needed arbitrary read. To establish an arbitrary read we can modify the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN-&amp;gt;BnoIsolationHandlesEntry&lt;/code&gt; and point it to a controlled userspace address, see once again &lt;a href=&quot;https://whereisk0shl.top/post/break-me-out-of-sandbox-in-old-pipe-cve-2022-22715-windows-dirty-pipe&quot;&gt;k0shls blog&lt;/a&gt;. At this userspace address we can now forge a &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_SEP_CACHED_HANDLES_ENTRY&lt;/code&gt;. The &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;EntryDescriptor.IsolationPrefix.Buffer&lt;/code&gt; at offset 0x30 can be pointed to the kernel address we want to read. And &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;EntryDescriptor.IsolationPrefix.MaximumLength&lt;/code&gt; at offset 0x28 defines how much bytes will be read.&lt;/p&gt;
 
 &lt;figure&gt;
-  &lt;a href=&quot;&quot; target=&quot;&quot;&gt;
-    &lt;img src=&quot;/assets/images/gen/content/arbitraryr.png&quot; alt=&quot;Photo illustrating the arbitrary read setup&quot; /&gt;
-  &lt;/a&gt;
+  &lt;img src=&quot;/assets/images/gen/content/arbitraryr.png&quot; alt=&quot;Photo illustrating the arbitrary read setup&quot; /&gt;
   &lt;figcaption&gt;
     &lt;h4&gt;Simple illustration of the arbitrary read setup&lt;/h4&gt;
     &lt;p&gt;&lt;/p&gt;
   &lt;/figcaption&gt;
 &lt;/figure&gt;
 
-&lt;p&gt;After we setup our &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_SEP_CACHED_HANDLES_ENTRY&lt;/code&gt; in userspace we can simply call &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;NtQueryInformationToken&lt;/code&gt; with a handle to our corrupted token and set the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;TokenInformationClass&lt;/code&gt; to &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;TokenBnoIsolation&lt;/code&gt;. At offset 0x10 of the returning buffer you will find your data (So make the input buffer 0x10 bytes bigger than &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;EntryDescriptor.IsolationPrefix.MaximumLength&lt;/code&gt;).&lt;/p&gt;
+&lt;p&gt;After we setup our &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_SEP_CACHED_HANDLES_ENTRY&lt;/code&gt; in userspace we can simply call &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;NtQueryInformationToken&lt;/code&gt; with a handle to our corrupted token and set the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;TokenInformationClass&lt;/code&gt; to &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;TokenBnoIsolation&lt;/code&gt;. At offset 0x10 of the returning buffer you will find your data. So make the input buffer 0x10 bytes bigger than &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;EntryDescriptor.IsolationPrefix.MaximumLength&lt;/code&gt;.&lt;/p&gt;
 
 &lt;h3 id=&quot;what-should-we-read&quot;&gt;What should we read?&lt;/h3&gt;
 &lt;p&gt;Chen Le Qi from Starlabs documented in a &lt;a href=&quot;https://starlabs.sg/blog/2023/11-exploitation-of-a-kernel-pool-overflow-from-a-restrictive-chunk-size-cve-2021-31969/#hunting-eprocess&quot;&gt;blogpost&lt;/a&gt; from 2023 how we can find the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_EPROCESS&lt;/code&gt; structure of our current process from the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; object we control. It still works in 24H2!&lt;/p&gt;
@@ -133,9 +129,7 @@ process id.&lt;/li&gt;
 &lt;h3 id=&quot;rip-previousmode&quot;&gt;RIP previousMode&lt;/h3&gt;
 &lt;p&gt;So Microsoft killed the &lt;a href=&quot;https://www.nccgroup.com/us/research-blog/cve-2021-31956-exploiting-the-windows-kernel-ntfs-with-wnf-part-2/&quot;&gt;previousMode technique&lt;/a&gt; with 24H2.&lt;/p&gt;
 &lt;figure&gt;
-  &lt;a href=&quot;&quot; target=&quot;&quot;&gt;
-    &lt;img src=&quot;/assets/images/gen/content/congrats.png&quot; alt=&quot;Photo of an upset child congratulating&quot; /&gt;
-  &lt;/a&gt;
+  &lt;img src=&quot;/assets/images/gen/content/congrats.png&quot; alt=&quot;Photo of an upset child congratulating&quot; /&gt;
   &lt;figcaption&gt;
     &lt;h4&gt;My reaction to this amazing achievement...&lt;/h4&gt;
     &lt;p&gt;&lt;/p&gt;
@@ -158,9 +152,7 @@ we messed up. But we couldn’t get it working anymore :(&lt;/p&gt;
 &lt;p&gt;At offset 0x18 there is an ReferenceCount counter which could be abused as an increment primitive. Because if we could duplicate a &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; and only the 
 field &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;ReferenceCount&lt;/code&gt; gets changed we would be back in the game!&lt;/p&gt;
 &lt;figure&gt;
-  &lt;a href=&quot;&quot; target=&quot;&quot;&gt;
-    &lt;img src=&quot;/assets/images/gen/content/arbitraryinc.jpg&quot; alt=&quot;Photo illustrating the arbitrary increment&quot; /&gt;
-  &lt;/a&gt;
+  &lt;img src=&quot;/assets/images/gen/content/arbitraryinc.jpg&quot; alt=&quot;Photo illustrating the arbitrary increment&quot; /&gt;
   &lt;figcaption&gt;
     &lt;h4&gt;Arbitrary increment with BnoIsolationHandlesEntry&lt;/h4&gt;
     &lt;p&gt;&lt;/p&gt;
@@ -169,9 +161,7 @@ field &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;Referen
 
 &lt;p&gt;So lets check it out in Binary Ninja:&lt;/p&gt;
 &lt;figure&gt;
-  &lt;a href=&quot;&quot; target=&quot;&quot;&gt;
-    &lt;img src=&quot;/assets/images/gen/content/inc_token.png&quot; alt=&quot;Photo of the increment&quot; /&gt;
-  &lt;/a&gt;
+  &lt;img src=&quot;/assets/images/gen/content/inc_token.png&quot; alt=&quot;Photo of the increment&quot; /&gt;
   &lt;figcaption&gt;
     &lt;h4&gt;Increment during SepDuplicateToken&lt;/h4&gt;
     &lt;p&gt;&lt;/p&gt;
@@ -181,23 +171,19 @@ field &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;Referen
 
 &lt;p&gt;We also should verify the decrement:&lt;/p&gt;
 &lt;figure&gt;
-  &lt;a href=&quot;&quot; target=&quot;&quot;&gt;
-    &lt;img src=&quot;/assets/images/gen/content/dec_token.png&quot; alt=&quot;Photo of the decrement&quot; /&gt;
-  &lt;/a&gt;
+  &lt;img src=&quot;/assets/images/gen/content/dec_token.png&quot; alt=&quot;Photo of the decrement&quot; /&gt;
   &lt;figcaption&gt;
     &lt;h4&gt;Decrement when a _TOKEN handle is closed&lt;/h4&gt;
     &lt;p&gt;&lt;/p&gt;
   &lt;/figcaption&gt;
 &lt;/figure&gt;
-&lt;p&gt;As long as the value doesn’t get decremented to &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;0&lt;/code&gt; (Which would try to free the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_SEP_CACHED_HANDLES_ENTRY&lt;/code&gt;) we should be fine.&lt;/p&gt;
+&lt;p&gt;As long as the value doesn’t get decremented to &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;0&lt;/code&gt;, which would try to free the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_SEP_CACHED_HANDLES_ENTRY&lt;/code&gt;, we should be fine.&lt;/p&gt;
 
 &lt;p&gt;Good life!&lt;/p&gt;
 
 &lt;p&gt;If we look at the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;Present&lt;/code&gt; and &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;Enabled&lt;/code&gt; fields of an process token running in low integrity:&lt;/p&gt;
 &lt;figure&gt;
-  &lt;a href=&quot;&quot; target=&quot;&quot;&gt;
-    &lt;img src=&quot;/assets/images/gen/content/lowintegrity_token.png&quot; alt=&quot;Photo of the privilege struct in a low integrity process&quot; /&gt;
-  &lt;/a&gt;
+  &lt;img src=&quot;/assets/images/gen/content/lowintegrity_token.png&quot; alt=&quot;Photo of the privilege struct in a low integrity process&quot; /&gt;
   &lt;figcaption&gt;
     &lt;h4&gt;The privilege struct of an low integrity process&lt;/h4&gt;
     &lt;p&gt;&lt;/p&gt;
@@ -256,7 +242,7 @@ Lets first have a closer look at &lt;code class=&quot;language-plaintext highlig
 &lt;p&gt;There is only one slight problem, we have a byte precision increment and we need to flip a bit. 
 The first thing we need to know is which byte we need to increment. We called this &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;offset&lt;/code&gt;. We can calculate this by dividing the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;PRIV&lt;/code&gt; by 8 with an integer division.&lt;/p&gt;
 
-&lt;p&gt;Now we need to calculate how many times we need to increment our target byte. For that we just check the last byte of our privilege and see which bit we need to flip. We named this property &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;amount&lt;/code&gt; (I know pretty genius names…):&lt;/p&gt;
+&lt;p&gt;Now we need to calculate how many times we need to increment our target byte. For that we just check the last byte of our privilege and see which bit we need to flip. We named this property &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;amount&lt;/code&gt;:&lt;/p&gt;
 
 &lt;div class=&quot;language-cpp highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;k&quot;&gt;typedef&lt;/span&gt; &lt;span class=&quot;k&quot;&gt;struct&lt;/span&gt; &lt;span class=&quot;nc&quot;&gt;_PrivOffsets&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;{&lt;/span&gt;
 	&lt;span class=&quot;kt&quot;&gt;uint16_t&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;amount&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;;&lt;/span&gt;
@@ -270,7 +256,7 @@ The first thing we need to know is which byte we need to increment. We called th
 	&lt;span class=&quot;k&quot;&gt;return&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;offset&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;;&lt;/span&gt;
 &lt;span class=&quot;p&quot;&gt;}&lt;/span&gt;
 &lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-&lt;p&gt;&lt;strong&gt;Please note:&lt;/strong&gt; I accidentally included a screenshot of the wrong &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;offset&lt;/code&gt; calculation in my BH presentation (Shame on me). I fixed it here. Sorry about that!&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Please note:&lt;/strong&gt; I accidentally included a screenshot of the wrong &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;offset&lt;/code&gt; calculation in my BH presentation. Shame on me. I fixed it here. Sorry about that!&lt;/p&gt;
 
 &lt;h3 id=&quot;usage&quot;&gt;Usage&lt;/h3&gt;
 &lt;p&gt;Now lets put our new primitive to use:&lt;/p&gt;
