@@ -5,7 +5,7 @@
     <meta content="ie=edge" http-equiv="x-ua-compatible">
     <meta content="width=device-width, initial-scale=1" name="viewport">
 
-    <title>Porting a Windows Kernel data-only technique to 24H2 - VMCALL.IO</title>
+    <title>Porting a Windows Kernel data-only exploit technique to 24H2 - VMCALL.IO</title>
 
 
   <meta name="description" content="How we got a paged-pool exploit technique working under Windows 11 24H2"/>
@@ -16,7 +16,7 @@
 <meta property="og:url" content="http://localhost:4000/blog/2025-04-05-porting-to-24H2/"/>
 
 
-  <meta property="og:title" content="Porting a Windows Kernel data-only technique to 24H2"/>
+  <meta property="og:title" content="Porting a Windows Kernel data-only exploit technique to 24H2"/>
 
 
 
@@ -384,7 +384,7 @@
           
           </div>
           <div class="post-title">
-            <h1>Porting a Windows Kernel data-only technique to 24H2</h1>
+            <h1>Porting a Windows Kernel data-only exploit technique to 24H2</h1>
           </div>
           
             <div class="post-description">
@@ -429,7 +429,7 @@
       <div class="col-12 col-lg-8">
         
           <div class="post-image">
-            <img src="/assets/images/gen/blog/bluescreen_prev.png" alt="Porting a Windows Kernel data-only technique to 24H2" />
+            <img src="/assets/images/gen/blog/bluescreen_prev.png" alt="Porting a Windows Kernel data-only exploit technique to 24H2" />
           </div>
         
       </div>
@@ -443,7 +443,7 @@
     <div class="row justify-content-center">
       <div class="col-12 col-lg-8">
         <div class="content"><p>This research was part of my presentation at <a href="https://www.blackhat.com/asia-25/briefings/schedule/#misadventures-with-copilot-attacking-and-exploiting-windows-npu-drivers-43619">BlackHat Asia 2025</a>. We will present our general exploitation strategy on how we used
-an integer overflow turned out-of-bounds write (CVE-2024-36336) on the paged pool to escalate our privileges on the latest Windows 11 version 24H2. In this blogpost we will focus on the exploitation strategy not on the bugs themselves. The bugs could be the content of a later blogpost… Maybe…</p>
+an integer overflow turned out-of-bounds write (CVE-2024-36336) inside the paged pool to escalate our privileges on the latest Windows 11 version 24H2. In this blogpost we will focus on the exploitation strategy not on the bugs themselves. The bugs could be the content of a later blogpost… Maybe…</p>
 
 <h2 id="tldr">TL;DR</h2>
 <p>We largely followed the method described by k0shl in his writeup about <a href="https://whereisk0shl.top/post/break-me-out-of-sandbox-in-old-pipe-cve-2022-22715-windows-dirty-pipe">CVE-2022-22715 Windows Dirty Pipe</a> (Amazing blog post read it!).
@@ -476,11 +476,11 @@ This primitive was then used to enable the <code class="language-plaintext highl
     <span class="n">UCHAR</span> <span class="n">UserData</span><span class="p">[</span><span class="mi">0</span><span class="p">];</span>                          <span class="c1">//Up to 0x1000</span>
 <span class="p">};</span> 
 </code></pre></div></div>
-<p>As seen by the last member of this struct the <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> has a dynamic size. So we can write up to 0x1000 bytes of user controlled data. This means we exactly know how big our <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> object will be. Additonally <code class="language-plaintext highlighter-rouge">AllocatedSize</code> and <code class="language-plaintext highlighter-rouge">DataSize</code> will be set to the size of our <code class="language-plaintext highlighter-rouge">UserData</code>. With an overflow we can now overwrite <code class="language-plaintext highlighter-rouge">AllocatedSize</code> and <code class="language-plaintext highlighter-rouge">DataSize</code> to an value bigger than the actual <code class="language-plaintext highlighter-rouge">UserData</code>. Now we can use the APIs <code class="language-plaintext highlighter-rouge">NtQueryWnfStateData</code> and <code class="language-plaintext highlighter-rouge">NtUpdateWnfStateData</code> to linearly read and write out of bounds of our <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> allocation.</p>
+<p>As seen by the last member of this struct the <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> has a dynamic size. We can write up to 0x1000 bytes of user controlled data. This means we know exactly how big our <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> object will be. Additonally <code class="language-plaintext highlighter-rouge">AllocatedSize</code> and <code class="language-plaintext highlighter-rouge">DataSize</code> will be set to the size of our <code class="language-plaintext highlighter-rouge">UserData</code>. With an overflow we can now overwrite <code class="language-plaintext highlighter-rouge">AllocatedSize</code> and <code class="language-plaintext highlighter-rouge">DataSize</code> to an value bigger than the actual <code class="language-plaintext highlighter-rouge">UserData</code>. Now we can use the APIs <code class="language-plaintext highlighter-rouge">NtQueryWnfStateData</code> and <code class="language-plaintext highlighter-rouge">NtUpdateWnfStateData</code> to linearly read and write out of bounds of our <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> allocation.</p>
 
 <p>More specifically if you  overwrite <code class="language-plaintext highlighter-rouge">AllocatedSize</code> you can write out of bounds up to the specified value or to a maximum of 0x1000. Fun fact you can overwrite <code class="language-plaintext highlighter-rouge">AllocatedSize</code> with a size bigger than 0x1000 and you will still be able to write up to 0x1000 bytes.</p>
 
-<p><code class="language-plaintext highlighter-rouge">DataSize</code> on the other hand, controls how much we can read. Here we are not limited to 0x1000 bytes but you always need to read the entire buffer. So if you overwrite this field with 0xffffff you have to read all 0xffffff bytes. If you read a page which is not paged in, this will lead to a crash. So don’t use huge numbers here. You can also use this property to your advantage. You can query all sprayed <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> objects with an buffer of similar size as the original one and the one which returns <code class="language-plaintext highlighter-rouge">STATUS_BUFFER_TOO_SMALL</code> is the object where <code class="language-plaintext highlighter-rouge">AllocatedSize</code> got corrupted.</p>
+<p><code class="language-plaintext highlighter-rouge">DataSize</code> on the other hand, controls how much we can read. Here we are not limited to 0x1000 bytes but you always need to read the entire buffer. So if you overwrite this field with the value 0xffffff you have to read all 0xffffff bytes. If you read a page which is not paged in, your system will crash. Don’t use huge numbers here. You can also use this property to your advantage. You can query all sprayed <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> objects with an buffer of similar size as the original one and the one which returns <code class="language-plaintext highlighter-rouge">STATUS_BUFFER_TOO_SMALL</code> is the object where <code class="language-plaintext highlighter-rouge">AllocatedSize</code> got corrupted.</p>
 
 <p>We can create a <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> object with a call to <code class="language-plaintext highlighter-rouge">NtCreateWnfStateName</code> and <code class="language-plaintext highlighter-rouge">NtUpdateWnfStateData</code>. As detailed in k0shls blog in the section <code class="language-plaintext highlighter-rouge">Demonstrate how I use WNF API with a accessible SD</code>.</p>
 
@@ -495,15 +495,15 @@ This primitive was then used to enable the <code class="language-plaintext highl
   <li>A <code class="language-plaintext highlighter-rouge">_TOKEN</code> object</li>
 </ol>
 
-<p>Luckily the only object where we don’t control the size of is the <code class="language-plaintext highlighter-rouge">_TOKEN</code> object. Interestingly the <code class="language-plaintext highlighter-rouge">_TOKEN</code> object is not a fixed allocation but the size can vary depending on what is stored inside the <code class="language-plaintext highlighter-rouge">_TOKEN-&gt;DynamicPart</code> (DACL and stuff I think, but I’m not 100% sure). For us our <code class="language-plaintext highlighter-rouge">_TOKEN</code> objects we will spray had a size around 0x7c0.
+<p>Luckily the only object where we don’t control the size is the <code class="language-plaintext highlighter-rouge">_TOKEN</code> object. Interestingly the <code class="language-plaintext highlighter-rouge">_TOKEN</code> object is not a fixed allocation but the size can vary depending on what is stored inside the <code class="language-plaintext highlighter-rouge">_TOKEN-&gt;DynamicPart</code> (DACL and stuff I think, but I’m not 100% sure). For us our <code class="language-plaintext highlighter-rouge">_TOKEN</code> objects had a size around 0x7c0.
 So we adjusted our <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> and our vulnerable object to the same size.</p>
 
 <p>Then our strategy was the following:</p>
 <ol>
   <li>Spray enough <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> to fill up all existing holes to get the allocations continous and enable <code class="language-plaintext highlighter-rouge">dynamic lookaside</code> for this allocation size.</li>
   <li>Free one <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code></li>
-  <li>Trigger the allocation of our vulnerable object and overflow AllocatedSize and parts of DataSize inside a <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code></li>
-  <li>Use the <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> object to overwrite AllocatedSize and DataSize of the next <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> with better values</li>
+  <li>Trigger the allocation of our vulnerable object and overflow <code class="language-plaintext highlighter-rouge">AllocatedSize</code> and parts of <code class="language-plaintext highlighter-rouge">DataSize</code> inside a <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code></li>
+  <li>Use the <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> object to overwrite <code class="language-plaintext highlighter-rouge">AllocatedSize</code> and <code class="language-plaintext highlighter-rouge">DataSize</code> of the next <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> with better values</li>
   <li>Replace the not corrupted <code class="language-plaintext highlighter-rouge">_WNF_STATE_DATA</code> objects with  <code class="language-plaintext highlighter-rouge">_TOKEN</code> objects</li>
   <li>Enjoy the full control over a <code class="language-plaintext highlighter-rouge">_TOKEN</code> object</li>
 </ol>
@@ -518,8 +518,9 @@ So we adjusted our <code class="language-plaintext highlighter-rouge">_WNF_STATE
     <p></p>
   </figcaption>
 </figure>
+
 <h2 id="establish-arbitrary-read">Establish arbitrary read</h2>
-<p>After a reliable linear read/write primitive was established we wanted arbitrary read. To establish an arbitrary read we can modify the <code class="language-plaintext highlighter-rouge">_TOKEN-&gt;BnoIsolationHandlesEntry</code> and point it to a controlled userspace address (see once again <a href="https://whereisk0shl.top/post/break-me-out-of-sandbox-in-old-pipe-cve-2022-22715-windows-dirty-pipe">k0shls blog</a>). At this userspace address we can now forge a <code class="language-plaintext highlighter-rouge">_SEP_CACHED_HANDLES_ENTRY</code>. The <code class="language-plaintext highlighter-rouge">EntryDescriptor.IsolationPrefix.Buffer</code> at offset 0x30 can be pointed to the kernel address we want to read. And <code class="language-plaintext highlighter-rouge">EntryDescriptor.IsolationPrefix.MaximumLength</code> at offset 0x28 defines how much bytes will be read.</p>
+<p>After a reliable linear read/write primitive was established we needed arbitrary read. To establish an arbitrary read we can modify the <code class="language-plaintext highlighter-rouge">_TOKEN-&gt;BnoIsolationHandlesEntry</code> and point it to a controlled userspace address (see once again <a href="https://whereisk0shl.top/post/break-me-out-of-sandbox-in-old-pipe-cve-2022-22715-windows-dirty-pipe">k0shls blog</a>). At this userspace address we can now forge a <code class="language-plaintext highlighter-rouge">_SEP_CACHED_HANDLES_ENTRY</code>. The <code class="language-plaintext highlighter-rouge">EntryDescriptor.IsolationPrefix.Buffer</code> at offset 0x30 can be pointed to the kernel address we want to read. And <code class="language-plaintext highlighter-rouge">EntryDescriptor.IsolationPrefix.MaximumLength</code> at offset 0x28 defines how much bytes will be read.</p>
 
 <figure>
   <a href="" target="">
