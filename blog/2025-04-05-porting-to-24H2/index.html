@@ -442,7 +442,7 @@
   <div class="container">
     <div class="row justify-content-center">
       <div class="col-12 col-lg-8">
-        <div class="content"><p>This research was part of my presentation at <a href="https://www.blackhat.com/asia-25/briefings/schedule/#misadventures-with-copilot-attacking-and-exploiting-windows-npu-drivers-43619">BlackHat Asia 2025</a>. We will present our general exploitation strategy on how we used
+        <div class="content"><p>This research was part of our presentation at <a href="https://www.blackhat.com/asia-25/briefings/schedule/#misadventures-with-copilot-attacking-and-exploiting-windows-npu-drivers-43619">BlackHat Asia 2025</a>. We will present our general exploitation strategy on how we used
 an integer overflow turned out-of-bounds write (CVE-2024-36336) inside the paged pool to escalate our privileges on the latest Windows 11 version 24H2. In this blogpost we will focus on the exploitation strategy not on the bugs themselves. The bugs could be the content of a later blogpost… Maybe…</p>
 
 <h2 id="tldr">TL;DR</h2>
@@ -745,7 +745,10 @@ The first thing we need to know is which byte we need to increment. We called th
 <p>So this technique is nothing revolutionary. We just ported an data-only attack technique to 24H2 with a little trick abusing reference counters.
 I’m far from an expert in Windows Kernel exploitation. I just wanted to share the reference counter trick and document the entire exploitation strategy. I hope somebody maybe find it useful.</p>
 
+<p>One last shoutout as I pulled most structs inside this blogpost from the <a href="https://www.vergiliusproject.com/kernels/x64/windows-11/24h2">Vergilius Project</a> website. A cool website if you want to quickly check a struct inside the windows kernel.</p>
+
 <p>And if you find any errors please tell me and I will fix them :)</p>
+
 </div>
         
 
