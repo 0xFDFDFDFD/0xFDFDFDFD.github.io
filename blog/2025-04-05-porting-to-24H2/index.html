@@ -225,8 +225,8 @@
     <i class="fab fa-github"></i>
   </a>
   
-  <a href="https://blog.vmcall.io/feed.xml" target="blank" title="RSS">
-    <i class="fas fa-feed"></i>
+  <a href="https://www.linkedin.com/in/nicola-stauffer-91063b18b/" target="blank" title="Linkedin">
+    <i class="fab fa-linkedin"></i>
   </a>
   
 </div>
@@ -450,7 +450,7 @@ an integer overflow turned out-of-bounds write (CVE-2024-36336) inside the paged
 With Windows 11 version 24H2 the bug around <code class="language-plaintext highlighter-rouge">previousMode</code> which was often used for <a href="https://www.nccgroup.com/us/research-blog/cve-2021-31956-exploiting-the-windows-kernel-ntfs-with-wnf-part-2/">better read/write primitives</a> was fixed.
 As the write primitive which k0shl used had side effects, we had to replace it with something else. We used a reference counter at offset 0x18 of <code class="language-plaintext highlighter-rouge">_TOKEN-&gt;BnoIsolationHandlesEntry</code> to gain an arbitrary increment primitive when we duplicate a <code class="language-plaintext highlighter-rouge">_TOKEN</code> object.
 The increment primitive only works if the value to increment is within the range <code class="language-plaintext highlighter-rouge">0x1 - 0x7ffffffffffffffff</code> otherwise, you get to enjoy a bluescreen.
-This primitive was then used to enable the <code class="language-plaintext highlighter-rouge">SeDebug</code> privilege in the <code class="language-plaintext highlighter-rouge">_TOKEN</code> object of the current  <code class="language-plaintext highlighter-rouge">_EPROCESS</code> and thus escalating our privileges. As a little bonus when you close the duplicated <code class="language-plaintext highlighter-rouge">_TOKEN</code> objects your privileges will be automatically be dropped again.</p>
+This primitive was then used to enable the <code class="language-plaintext highlighter-rouge">SeDebug</code> privilege in the <code class="language-plaintext highlighter-rouge">_TOKEN</code> object of the current  <code class="language-plaintext highlighter-rouge">_EPROCESS</code> and thus escalating our privileges. As a little bonus when you close the duplicated <code class="language-plaintext highlighter-rouge">_TOKEN</code> objects your privileges will be automatically dropped again.</p>
 
 <h2 id="intro">Intro</h2>
 <p>So lets start at the beginning. Our exploitation strategy looks something like this:</p>

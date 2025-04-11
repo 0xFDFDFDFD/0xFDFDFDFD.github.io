@@ -5,8 +5,8 @@
     <description></description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Thu, 10 Apr 2025 15:49:51 +0200</pubDate>
-    <lastBuildDate>Thu, 10 Apr 2025 15:49:51 +0200</lastBuildDate>
+    <pubDate>Fri, 11 Apr 2025 04:30:07 +0200</pubDate>
+    <lastBuildDate>Fri, 11 Apr 2025 04:30:07 +0200</lastBuildDate>
     <generator>Jekyll v4.4.1</generator>
     
       <item>
@@ -19,7 +19,7 @@ an integer overflow turned out-of-bounds write (CVE-2024-36336) inside the paged
 With Windows 11 version 24H2 the bug around &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;previousMode&lt;/code&gt; which was often used for &lt;a href=&quot;https://www.nccgroup.com/us/research-blog/cve-2021-31956-exploiting-the-windows-kernel-ntfs-with-wnf-part-2/&quot;&gt;better read/write primitives&lt;/a&gt; was fixed.
 As the write primitive which k0shl used had side effects, we had to replace it with something else. We used a reference counter at offset 0x18 of &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN-&amp;gt;BnoIsolationHandlesEntry&lt;/code&gt; to gain an arbitrary increment primitive when we duplicate a &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; object.
 The increment primitive only works if the value to increment is within the range &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;0x1 - 0x7ffffffffffffffff&lt;/code&gt; otherwise, you get to enjoy a bluescreen.
-This primitive was then used to enable the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;SeDebug&lt;/code&gt; privilege in the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; object of the current  &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_EPROCESS&lt;/code&gt; and thus escalating our privileges. As a little bonus when you close the duplicated &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; objects your privileges will be automatically be dropped again.&lt;/p&gt;
+This primitive was then used to enable the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;SeDebug&lt;/code&gt; privilege in the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; object of the current  &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_EPROCESS&lt;/code&gt; and thus escalating our privileges. As a little bonus when you close the duplicated &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;_TOKEN&lt;/code&gt; objects your privileges will be automatically dropped again.&lt;/p&gt;
 
 &lt;h2 id=&quot;intro&quot;&gt;Intro&lt;/h2&gt;
 &lt;p&gt;So lets start at the beginning. Our exploitation strategy looks something like this:&lt;/p&gt;
