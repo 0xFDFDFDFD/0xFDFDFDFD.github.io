@@ -3,10 +3,10 @@
   <channel>
     <title>VMCALL.IO</title>
     <description></description>
-    <link>http://localhost:4000/</link>
-    <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Fri, 11 Apr 2025 04:30:07 +0200</pubDate>
-    <lastBuildDate>Fri, 11 Apr 2025 04:30:07 +0200</lastBuildDate>
+    <link>https://blog.vmcall.io/</link>
+    <atom:link href="https://blog.vmcall.io/feed.xml" rel="self" type="application/rss+xml"/>
+    <pubDate>Fri, 18 Apr 2025 04:11:02 +0200</pubDate>
+    <lastBuildDate>Fri, 18 Apr 2025 04:11:02 +0200</lastBuildDate>
     <generator>Jekyll v4.4.1</generator>
     
       <item>
@@ -320,8 +320,8 @@ I’m far from an expert in Windows Kernel exploitation. I just wanted to share 
 
 </description>
         <pubDate>Fri, 04 Apr 2025 08:22:42 +0200</pubDate>
-        <link>http://localhost:4000/blog/2025-04-05-porting-to-24H2/</link>
-        <guid isPermaLink="true">http://localhost:4000/blog/2025-04-05-porting-to-24H2/</guid>
+        <link>https://blog.vmcall.io/blog/2025-04-05-porting-to-24H2/</link>
+        <guid isPermaLink="true">https://blog.vmcall.io/blog/2025-04-05-porting-to-24H2/</guid>
         
         
         <category>Exploit Development</category>
@@ -346,8 +346,8 @@ There is a high chance it will be something related to the windows kernel, vulne
 &lt;h3 id=&quot;so-stay-tuned-for-updatestheres-more-to-come&quot;&gt;…so stay tuned for updates—there’s more to come!&lt;/h3&gt;
 </description>
         <pubDate>Wed, 26 Mar 2025 10:49:03 +0100</pubDate>
-        <link>http://localhost:4000/blog/2025-03-26-hello-world/</link>
-        <guid isPermaLink="true">http://localhost:4000/blog/2025-03-26-hello-world/</guid>
+        <link>https://blog.vmcall.io/blog/2025-03-26-hello-world/</link>
+        <guid isPermaLink="true">https://blog.vmcall.io/blog/2025-03-26-hello-world/</guid>
         
         
         <category>Intro</category>
