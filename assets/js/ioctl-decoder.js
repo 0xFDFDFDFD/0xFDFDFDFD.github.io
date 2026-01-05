@@ -1,0 +1,103 @@
+const deviceTypeMap = {
+    0x00000001: "FILE_DEVICE_BEEP", 0x00000002: "FILE_DEVICE_CD_ROM", 0x00000003: "FILE_DEVICE_CD_ROM_FILE_SYSTEM",
+    0x00000004: "FILE_DEVICE_CONTROLLER", 0x00000005: "FILE_DEVICE_DATALINK", 0x00000006: "FILE_DEVICE_DFS",
+    0x00000007: "FILE_DEVICE_DISK", 0x00000008: "FILE_DEVICE_DISK_FILE_SYSTEM", 0x00000009: "FILE_DEVICE_FILE_SYSTEM",
+    0x0000000a: "FILE_DEVICE_INPORT_PORT", 0x0000000b: "FILE_DEVICE_KEYBOARD", 0x0000000c: "FILE_DEVICE_MAILSLOT",
+    0x0000000d: "FILE_DEVICE_MIDI_IN", 0x0000000e: "FILE_DEVICE_MIDI_OUT", 0x0000000f: "FILE_DEVICE_MOUSE",
+    0x00000010: "FILE_DEVICE_MULTI_UNC_PROVIDER", 0x00000011: "FILE_DEVICE_NAMED_PIPE", 0x00000012: "FILE_DEVICE_NETWORK",
+    0x00000013: "FILE_DEVICE_NETWORK_BROWSER", 0x00000014: "FILE_DEVICE_NETWORK_FILE_SYSTEM", 0x00000015: "FILE_DEVICE_NULL",
+    0x00000016: "FILE_DEVICE_PARALLEL_PORT", 0x00000017: "FILE_DEVICE_PHYSICAL_NETCARD", 0x00000018: "FILE_DEVICE_PRINTER",
+    0x00000019: "FILE_DEVICE_SCANNER", 0x0000001a: "FILE_DEVICE_SERIAL_MOUSE_PORT", 0x0000001b: "FILE_DEVICE_SERIAL_PORT",
+    0x0000001c: "FILE_DEVICE_SCREEN", 0x0000001d: "FILE_DEVICE_SOUND", 0x0000001e: "FILE_DEVICE_STREAMS",
+    0x0000001f: "FILE_DEVICE_TAPE", 0x00000020: "FILE_DEVICE_TAPE_FILE_SYSTEM", 0x00000021: "FILE_DEVICE_TRANSPORT",
+    0x00000022: "FILE_DEVICE_UNKNOWN", 0x00000023: "FILE_DEVICE_VIDEO", 0x00000024: "FILE_DEVICE_VIRTUAL_DISK",
+    0x00000025: "FILE_DEVICE_WAVE_IN", 0x00000026: "FILE_DEVICE_WAVE_OUT", 0x00000027: "FILE_DEVICE_8042_PORT",
+    0x00000028: "FILE_DEVICE_NETWORK_REDIRECTOR", 0x00000029: "FILE_DEVICE_BATTERY", 0x0000002a: "FILE_DEVICE_BUS_EXTENDER",
+    0x0000002b: "FILE_DEVICE_MODEM", 0x0000002c: "FILE_DEVICE_VDM", 0x0000002d: "FILE_DEVICE_MASS_STORAGE",
+    0x0000002e: "FILE_DEVICE_SMB", 0x0000002f: "FILE_DEVICE_KS", 0x00000030: "FILE_DEVICE_CHANGER",
+    0x00000031: "FILE_DEVICE_SMARTCARD", 0x00000032: "FILE_DEVICE_ACPI", 0x00000033: "FILE_DEVICE_DVD",
+    0x00000034: "FILE_DEVICE_FULLSCREEN_VIDEO", 0x00000035: "FILE_DEVICE_DFS_FILE_SYSTEM", 0x00000036: "FILE_DEVICE_DFS_VOLUME",
+    0x00000037: "FILE_DEVICE_SERENUM", 0x00000038: "FILE_DEVICE_TERMSRV", 0x00000039: "FILE_DEVICE_KSEC",
+    0x0000003A: "FILE_DEVICE_FIPS", 0x0000003B: "FILE_DEVICE_INFINIBAND", 0x0000003E: "FILE_DEVICE_VMBUS",
+    0x0000003F: "FILE_DEVICE_CRYPT_PROVIDER", 0x00000040: "FILE_DEVICE_WPD", 0x00000041: "FILE_DEVICE_BLUETOOTH",
+    0x00000042: "FILE_DEVICE_MT_COMPOSITE", 0x00000043: "FILE_DEVICE_MT_TRANSPORT", 0x00000044: "FILE_DEVICE_BIOMETRIC",
+    0x00000045: "FILE_DEVICE_PMI", 0x00000046: "FILE_DEVICE_EHSTOR", 0x00000047: "FILE_DEVICE_DEVAPI",
+    0x00000048: "FILE_DEVICE_GPIO", 0x00000049: "FILE_DEVICE_USBEX", 0x00000050: "FILE_DEVICE_CONSOLE",
+    0x00000051: "FILE_DEVICE_NFP", 0x00000052: "FILE_DEVICE_SYSENV", 0x00000053: "FILE_DEVICE_VIRTUAL_BLOCK",
+    0x00000054: "FILE_DEVICE_POINT_OF_SERVICE", 0x00000055: "FILE_DEVICE_STORAGE_REPLICATION", 0x00000056: "FILE_DEVICE_TRUST_ENV",
+    0x00000057: "FILE_DEVICE_UCM", 0x00000058: "FILE_DEVICE_UCMTCPCI", 0x00000059: "FILE_DEVICE_PERSISTENT_MEMORY",
+    0x0000005a: "FILE_DEVICE_NVDIMM", 0x0000005b: "FILE_DEVICE_HOLOGRAPHIC", 0x0000005c: "FILE_DEVICE_SDFXHCI",
+    0x0000005d: "FILE_DEVICE_UCMUCSI", 0x0000005e: "FILE_DEVICE_PRM", 0x0000005f: "FILE_DEVICE_EVENT_COLLECTOR",
+    0x00000060: "FILE_DEVICE_USB4", 0x00000061: "FILE_DEVICE_SOUNDWIRE", 0x00000062: "FILE_DEVICE_FABRIC_NVME",
+    0x00000063: "FILE_DEVICE_SVM", 0x00000064: "FILE_DEVICE_HARDWARE_ACCELERATOR", 0x00000065: "FILE_DEVICE_I3C"
+};
+
+const methodDescriptions = {
+    0: {
+        name: "METHOD_BUFFERED (0)",
+        desc: "<strong>In & out copied to kernel space</strong> The I/O Manager allocates a non-paged pool buffer (<code>Irp->AssociatedIrp.SystemBuffer</code>).<br>1. Input:The I/O Manager copies the users input buffer into a kernel-allocated SystemBuffer.<br>2. Output: Once the IOCTL completes, the I/O Manager copies the contents of the SystemBuffer into the users output buffer."
+    },
+    1: {
+        name: "METHOD_IN_DIRECT (1)",
+        desc: "<strong>Direct I/O</strong><br>1. Input: Buffered (Copied to kernelspace. <code>Irp->AssociatedIrp.SystemBuffer</code>).<br>2. Output: Locked pages (<code>Irp->MdlAddress</code>, so in userspace). I/O Manager probes UserOutputBuffer for <strong>READ</strong> access and locks pages. (Used if devices read from this memory)."
+    },
+    2: {
+        name: "METHOD_OUT_DIRECT (2)",
+        desc: "<strong>Direct I/O</strong><br>1. Input: Buffered (Copied to kernelspace. <code>Irp->AssociatedIrp.SystemBuffer</code>).<br>2. Output: Locked pages (<code>Irp->MdlAddress</code>, so in userspace). I/O Manager probes UserOutputBuffer for <strong>WRITE</strong> access and locks pages. (Used if device writes to this memory)."
+    },
+    3: {
+        name: "METHOD_NEITHER (3)",
+        desc: "<strong>Raw / User Context.</strong> No OS copy or locking.<br>1. Input: <code>stack->Parameters.DeviceIoControl.Type3InputBuffer</code> (Virtual Addr).<br>2. Output: <code>Irp->UserBuffer</code> (Virtual Addr).<br><strong>Warning:</strong> Only accessible in the context of the calling thread. Driver must validate pointers and probe memory manually. Lucky you :)"
+    }
+};
+
+function decodeIoctl() {
+    const inputStr = document.getElementById('ioctlInput').value.trim();
+    const resultsDiv = document.getElementById('results');
+    const errorDiv = document.getElementById('errorMsg');
+    
+    let ioctl = parseInt(inputStr);
+
+    if (isNaN(ioctl)) {
+        errorDiv.style.display = 'block';
+        resultsDiv.style.display = 'none';
+        return;
+    }
+
+    errorDiv.style.display = 'none';
+    resultsDiv.style.display = 'block';
+
+    // 1. Method (Bits 0-1)
+    const methodCode = ioctl & 0x03;
+    const methodInfo = methodDescriptions[methodCode];
+
+    // 2. Function (Bits 2-13)
+    const functionCode = (ioctl >>> 2) & 0xFFF;
+
+    // 3. Access (Bits 14-15)
+    const accessCode = (ioctl >>> 14) & 0x03;
+    const accessMap = {
+        0: "FILE_ANY_ACCESS (0)",
+        1: "FILE_READ_DATA (1)",
+        2: "FILE_WRITE_DATA (2)",
+        3: "FILE_READ | FILE_WRITE (3)"
+    };
+
+    // 4. Device Type (Bits 16-31)
+    const deviceType = (ioctl >>> 16) & 0xFFFF;
+    const deviceName = deviceTypeMap[deviceType] || "UNKNOWN / CUSTOM";
+
+    // Update DOM
+    document.getElementById('outDeviceName').textContent = deviceName;
+    document.getElementById('outDeviceVal').textContent = `0x${deviceType.toString(16).toUpperCase()} (${deviceType})`;
+    
+    document.getElementById('outAccess').textContent = accessMap[accessCode];
+    
+    document.getElementById('outFunction').textContent = `0x${functionCode.toString(16).toUpperCase()} (${functionCode})`;
+    
+    document.getElementById('outMethod').textContent = methodInfo.name;
+    document.getElementById('outMethodDetails').innerHTML = methodInfo.desc;
+    
+    document.getElementById('outBinary').textContent = 
+        (ioctl >>> 0).toString(2).padStart(32, '0').match(/.{1,8}/g).join(' ');
+}
