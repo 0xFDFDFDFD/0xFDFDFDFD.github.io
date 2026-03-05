@@ -39,15 +39,15 @@ const methodDescriptions = {
     },
     1: {
         name: "METHOD_IN_DIRECT (1)",
-        desc: "<strong>Direct I/O</strong><br>1. Input: Buffered (Copied to kernelspace. <code>Irp->AssociatedIrp.SystemBuffer</code>).<br>2. Output: Locked pages (<code>Irp->MdlAddress</code>, so in userspace). I/O Manager probes UserOutputBuffer for <strong>READ</strong> access and locks pages. (Used if devices read from this memory)."
+        desc: "<strong>Direct I/O</strong><br>1. Input: Buffered (Copied to kernelspace. <code>Irp->AssociatedIrp.SystemBuffer</code>).<br>2. Output: Locked pages (<code>Irp->MdlAddress</code>, so in userspace). I/O Manager probes UserOutputBuffer for <strong>READ</strong> access and locks pages."
     },
     2: {
         name: "METHOD_OUT_DIRECT (2)",
-        desc: "<strong>Direct I/O</strong><br>1. Input: Buffered (Copied to kernelspace. <code>Irp->AssociatedIrp.SystemBuffer</code>).<br>2. Output: Locked pages (<code>Irp->MdlAddress</code>, so in userspace). I/O Manager probes UserOutputBuffer for <strong>WRITE</strong> access and locks pages. (Used if device writes to this memory)."
+        desc: "<strong>Direct I/O</strong><br>1. Input: Buffered (Copied to kernelspace. <code>Irp->AssociatedIrp.SystemBuffer</code>).<br>2. Output: Locked pages (<code>Irp->MdlAddress</code>, so in userspace). I/O Manager probes UserOutputBuffer for <strong>WRITE</strong> access and locks pages."
     },
     3: {
         name: "METHOD_NEITHER (3)",
-        desc: "<strong>Raw / User Context.</strong> No OS copy or locking.<br>1. Input: <code>stack->Parameters.DeviceIoControl.Type3InputBuffer</code> (Virtual Addr).<br>2. Output: <code>Irp->UserBuffer</code> (Virtual Addr).<br><strong>Warning:</strong> Only accessible in the context of the calling thread. Driver must validate pointers and probe memory manually. Lucky you :)"
+        desc: "<strong>Raw / User Context.</strong> No OS copy or locking.<br>1. Input: <code>stack->Parameters.DeviceIoControl.Type3InputBuffer</code> (Virtual Addr).<br>2. Output: <code>Irp->UserBuffer</code> (Virtual Addr).<br><strong>Warning:</strong> Only accessible in the context of the calling thread. The driver must validate pointers and probe memory manually. Good luck :)"
     }
 };
 
@@ -76,23 +76,35 @@ function decodeIoctl() {
 
     // 3. Access (Bits 14-15)
     const accessCode = (ioctl >>> 14) & 0x03;
-    const accessMap = {
-        0: "FILE_ANY_ACCESS (0)",
-        1: "FILE_READ_DATA (1)",
-        2: "FILE_WRITE_DATA (2)",
-        3: "FILE_READ | FILE_WRITE (3)"
+    const accessDescriptions = {
+        0: {
+            name: "FILE_ANY_ACCESS (0)",
+            desc: "Any handle will be able to send an IOCTL."
+        },
+        1: {
+            name: "FILE_READ_DATA (1)",
+            desc: "You need a handle with FILE_READ_DATA to send an IOCTL."
+        },
+        2: {
+            name: "FILE_WRITE_DATA (2)",
+            desc: "You need a handle with FILE_WRITE_DATA to send an IOCTL."
+        },
+        3: {
+            name: "FILE_READ_DATA | FILE_WRITE_DATA (3)",
+            desc: "You need a handle with both FILE_READ_DATA and FILE_WRITE_DATA to send an IOCTL."
+        }
     };
-
     // 4. Device Type (Bits 16-31)
     const deviceType = (ioctl >>> 16) & 0xFFFF;
     const deviceName = deviceTypeMap[deviceType] || "UNKNOWN / CUSTOM";
-
+    const accessInfo = accessDescriptions[accessCode];
     // Update DOM
     document.getElementById('outDeviceName').textContent = deviceName;
     document.getElementById('outDeviceVal').textContent = `0x${deviceType.toString(16).toUpperCase()} (${deviceType})`;
     
-    document.getElementById('outAccess').textContent = accessMap[accessCode];
-    
+    document.getElementById('outAccess').textContent = accessInfo.name;
+    document.getElementById('outAccessDetails').textContent = accessInfo.desc;
+
     document.getElementById('outFunction').textContent = `0x${functionCode.toString(16).toUpperCase()} (${functionCode})`;
     
     document.getElementById('outMethod').textContent = methodInfo.name;
