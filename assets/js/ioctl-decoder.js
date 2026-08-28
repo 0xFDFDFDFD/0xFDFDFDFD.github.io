@@ -82,7 +82,12 @@
        ============================================================ */
     function decodeIoctl() {
         var inputStr = elInput.value.trim();
-        var ioctl = parseInt(inputStr, 10);
+
+        /* Parse the input, honouring an optional 0x / 0X hex prefix.
+           parseInt(x, 10) stops at the first invalid decimal char, so
+           "0x222000" would silently parse as 0. Detect hex explicitly. */
+        var isHex = /^0x/i.test(inputStr);
+        var ioctl = parseInt(inputStr, isHex ? 16 : 10);
 
         if (isNaN(ioctl)) {
             elError.style.display = "block";
