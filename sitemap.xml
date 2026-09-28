@@ -3,7 +3,7 @@
   
     
     <url>
-      <loc>https://blog.vmcall.io/blog/2025-04-05-porting-to-24H2/</loc>
+      <loc>http://localhost:4000/blog/2025-04-05-porting-to-24H2/</loc>
       
         <lastmod>2025-04-04T08:22:42+02:00</lastmod>
       
@@ -18,7 +18,7 @@
   
     
     <url>
-      <loc>https://blog.vmcall.io/blog/2025-03-26-hello-world/</loc>
+      <loc>http://localhost:4000/blog/2025-03-26-hello-world/</loc>
       
         <lastmod>2025-03-26T10:49:03+01:00</lastmod>
       
@@ -34,7 +34,7 @@
   
     
     <url>
-      <loc>https://blog.vmcall.io/about/</loc>
+      <loc>http://localhost:4000/about/</loc>
       
         <lastmod>2025-11-07T14:37:00+01:00</lastmod>
       
@@ -49,24 +49,9 @@
   
     
     <url>
-      <loc>https://blog.vmcall.io/blog-2/</loc>
+      <loc>http://localhost:4000/blog-2/</loc>
       
-        <lastmod>2026-08-28T11:01:16+02:00</lastmod>
-      
-      
-        <changefreq>monthly</changefreq>
-      
-      
-        <priority>0.3</priority>
-      
-    </url>
-    
-  
-    
-    <url>
-      <loc>https://blog.vmcall.io/blog-3/</loc>
-      
-        <lastmod>2026-08-28T11:01:16+02:00</lastmod>
+        <lastmod>2026-09-28T14:36:35+02:00</lastmod>
       
       
         <changefreq>monthly</changefreq>
@@ -79,26 +64,9 @@
   
     
     <url>
-      <loc>https://blog.vmcall.io/categories/</loc>
+      <loc>http://localhost:4000/blog-3/</loc>
       
-        <lastmod>2026-08-28T11:01:16+02:00</lastmod>
-      
-      
-        <changefreq>monthly</changefreq>
-      
-      
-        <priority>0.3</priority>
-      
-    </url>
-    
-  
-    
-  
-    
-    <url>
-      <loc>https://blog.vmcall.io/</loc>
-      
-        <lastmod>2026-08-28T11:01:16+02:00</lastmod>
+        <lastmod>2026-09-28T14:36:35+02:00</lastmod>
       
       
         <changefreq>monthly</changefreq>
@@ -111,24 +79,9 @@
   
     
     <url>
-      <loc>https://blog.vmcall.io/blog/</loc>
+      <loc>http://localhost:4000/categories/</loc>
       
-        <lastmod>2026-08-28T11:01:16+02:00</lastmod>
-      
-      
-        <changefreq>monthly</changefreq>
-      
-      
-        <priority>0.3</priority>
-      
-    </url>
-    
-  
-    
-    <url>
-      <loc>https://blog.vmcall.io/assets/css/main.css</loc>
-      
-        <lastmod>2026-08-28T11:01:16+02:00</lastmod>
+        <lastmod>2026-09-28T14:36:35+02:00</lastmod>
       
       
         <changefreq>monthly</changefreq>
@@ -143,7 +96,54 @@
   
     
     <url>
-      <loc>https://blog.vmcall.io/tools/</loc>
+      <loc>http://localhost:4000/</loc>
+      
+        <lastmod>2026-09-28T14:36:35+02:00</lastmod>
+      
+      
+        <changefreq>monthly</changefreq>
+      
+      
+        <priority>0.3</priority>
+      
+    </url>
+    
+  
+    
+    <url>
+      <loc>http://localhost:4000/blog/</loc>
+      
+        <lastmod>2026-09-28T14:36:35+02:00</lastmod>
+      
+      
+        <changefreq>monthly</changefreq>
+      
+      
+        <priority>0.3</priority>
+      
+    </url>
+    
+  
+    
+    <url>
+      <loc>http://localhost:4000/assets/css/main.css</loc>
+      
+        <lastmod>2026-09-28T14:36:35+02:00</lastmod>
+      
+      
+        <changefreq>monthly</changefreq>
+      
+      
+        <priority>0.3</priority>
+      
+    </url>
+    
+  
+    
+  
+    
+    <url>
+      <loc>http://localhost:4000/tools/</loc>
       
         <lastmod>2025-11-07T14:37:00+01:00</lastmod>
       
@@ -158,24 +158,9 @@
   
     
     <url>
-      <loc>https://blog.vmcall.io/category/intro/</loc>
+      <loc>http://localhost:4000/category/intro/</loc>
       
-        <lastmod>2026-08-28T11:01:16+02:00</lastmod>
-      
-      
-        <changefreq>monthly</changefreq>
-      
-      
-        <priority>0.3</priority>
-      
-    </url>
-    
-  
-    
-    <url>
-      <loc>https://blog.vmcall.io/category/exploit-development/</loc>
-      
-        <lastmod>2026-08-28T11:01:16+02:00</lastmod>
+        <lastmod>2026-09-28T14:36:35+02:00</lastmod>
       
       
         <changefreq>monthly</changefreq>
@@ -188,9 +173,9 @@
   
     
     <url>
-      <loc>https://blog.vmcall.io/category/windows-kernel/</loc>
+      <loc>http://localhost:4000/category/exploit-development/</loc>
       
-        <lastmod>2026-08-28T11:01:16+02:00</lastmod>
+        <lastmod>2026-09-28T14:36:35+02:00</lastmod>
       
       
         <changefreq>monthly</changefreq>
@@ -203,9 +188,24 @@
   
     
     <url>
-      <loc>https://blog.vmcall.io/assets/css/main.css.map</loc>
+      <loc>http://localhost:4000/category/windows-kernel/</loc>
       
-        <lastmod>2026-08-28T11:01:16+02:00</lastmod>
+        <lastmod>2026-09-28T14:36:35+02:00</lastmod>
+      
+      
+        <changefreq>monthly</changefreq>
+      
+      
+        <priority>0.3</priority>
+      
+    </url>
+    
+  
+    
+    <url>
+      <loc>http://localhost:4000/assets/css/main.css.map</loc>
+      
+        <lastmod>2026-09-28T14:36:35+02:00</lastmod>
       
       
         <changefreq>monthly</changefreq>
